@@ -1,0 +1,33 @@
+# Game data. Copyrighted, large, and not ours to redistribute.
+GFX Originals/
+*.dir
+
+# Palettes extracted from the game's own files. Only used for cross-checking
+# during reverse engineering; the tool reads palettes from the sprites.
+Pallettes/
+
+# Local scratch notes
+PROMPTS.txt
+
+# Reference unpacks produced by spriteEditor / spriteEddy. Used as ground
+# truth when verifying the decoder, but reproducible from the game files.
+spriteEditorUnpacks/
+unpack from spriteEditor/
+unpack from spriteEditor compress spr checked/
+unpack from spriteeddy/
+
+# Output of this tool. All reproducible with a single command.
+decompressed/
+extracted/
+customThemeTest/
+tmp/
+
+Team17 compression.md
+WIKI_SPRITE_FILE.md
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
