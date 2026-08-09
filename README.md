@@ -27,13 +27,13 @@ cd wa-spritetool
 ### List an archive
 
 ```bash
-python3 wa_py_spriteHelper.py list Gfx.dir
+python3 wa_spritetool.py list Gfx.dir
 ```
 
 ### Extract raw files
 
 ```bash
-python3 wa_py_spriteHelper.py extract Gfx.dir output/
+python3 wa_spritetool.py extract Gfx.dir output/
 ```
 
 Writes the archive's files unchanged, preserving any internal subdirectories.
@@ -41,8 +41,8 @@ Writes the archive's files unchanged, preserving any internal subdirectories.
 ### Decode sprites
 
 ```bash
-python3 wa_py_spriteHelper.py decompress Gfx.dir output/
-python3 wa_py_spriteHelper.py decompress Gfx.dir output/ --gif
+python3 wa_spritetool.py decompress Gfx.dir output/
+python3 wa_spritetool.py decompress Gfx.dir output/ --gif
 ```
 
 For each sprite this writes three files:
