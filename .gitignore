@@ -20,6 +20,8 @@ unpack from spriteeddy/
 decompressed/
 extracted/
 customThemeTest/
+output/
+output*/
 tmp/
 
 Team17 compression.md

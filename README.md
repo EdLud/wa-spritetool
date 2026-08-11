@@ -38,6 +38,28 @@ python3 wa_spritetool.py extract Gfx.dir output/
 
 Writes the archive's files unchanged, preserving any internal subdirectories.
 
+### Build an archive
+
+```bash
+python3 wa_spritetool.py pack Level.dir.txt
+python3 wa_spritetool.py pack Level.dir.txt output/
+```
+
+Takes a `<name>.dir.txt` listing -- one entry per line, in the order they
+should appear -- and writes `<name>.dir` in lower case beside it, or in
+`output/` if given. The listed files are read from the folder containing the
+listing; `gfx0\name.spr` style entries come from a `gfx0` subfolder.
+
+Sprites and images are rebuilt from their `.bmp` (plus `.spd` for sprite
+metadata) so edits to those take effect. Anything else -- `.inf`, `.txt` -- is
+copied through unchanged.
+
+| Flag | Effect |
+|---|---|
+| `--no-compress-img` | store images uncompressed |
+| `--no-recreate` | reuse an existing `.spr`/`.img` instead of rebuilding from BMP |
+| `--opaque-img` | treat images as having no transparent colour |
+
 ### Decode sprites
 
 ```bash
@@ -77,12 +99,12 @@ output/
 
 | Format | Read | Write |
 |---|---|---|
-| `.dir` graphics directory | yes | not yet |
-| `.spr` sprite, compressed and uncompressed | yes | not yet |
-| `.img` image | yes | not yet |
+| `.dir` graphics directory | yes | yes |
+| `.spr` sprite | yes | compressed only |
+| `.img` image | yes | yes |
 
-Repacking modified graphics back into a `.dir` is not implemented, so this is
-currently an extraction and inspection tool rather than a modding round-trip.
+Uncompressed sprites can be read but not written; every sprite the game ships
+inside a `.dir` is compressed, so `pack` produces compressed output.
 
 ## Documentation
 

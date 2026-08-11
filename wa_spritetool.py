@@ -128,6 +128,114 @@ class Team17Decompressor:
             offset += 1
 
 
+class Team17Compressor:
+    """Produces streams that `Team17Decompressor` can read back.
+
+    The format allows many valid encodings of the same data, so output will
+    not be byte-identical to Team17's own tools; it only has to decode to the
+    same bytes. Correctness is checked by round-tripping, never by comparing
+    against a reference encoder's output.
+
+    Command set (mirrors the decompressor):
+        0xxxxxxx                    literal colour index, 0-127
+        1aaaa bbbbbbbbbbb           copy arg1+2 bytes from arg2+1 back
+        10000 bbbbbbbbbbb cccccccc  copy arg3+18 bytes from arg2 back
+
+    So a match reaches at most 2047 bytes back and copies 3-17 bytes with the
+    two-byte form or 18-273 with the three-byte form.
+    """
+
+    MAX_DIST = 2047
+    MIN_MATCH = 3
+    MAX_MATCH = 273
+    # Sprite data is highly repetitive, so a single 3-byte key can accumulate
+    # thousands of positions. Walking them all is what makes a naive encoder
+    # unusably slow; the newest few almost always contain the best match.
+    MAX_CHAIN = 32
+
+    @staticmethod
+    def compress(data: bytes) -> bytes:
+        out = bytearray()
+        # Map the next three bytes to recent positions, newest last, so the
+        # search walks plausible candidates instead of the whole window.
+        index: Dict[bytes, List[int]] = {}
+        n = len(data)
+        min_match = Team17Compressor.MIN_MATCH
+        max_match = Team17Compressor.MAX_MATCH
+        max_dist = Team17Compressor.MAX_DIST
+        max_chain = Team17Compressor.MAX_CHAIN
+        i = 0
+        while i < n:
+            best_len = 0
+            best_dist = 0
+            if i + min_match <= n:
+                key = data[i:i + min_match]
+                chain = index.get(key)
+                if chain:
+                    lo = i - max_dist
+                    limit = min(max_match, n - i)
+                    tried = 0
+                    for pos in reversed(chain):
+                        if pos < lo or tried >= max_chain:
+                            break
+                        tried += 1
+                        # Runs are legal: the copy reads bytes this same
+                        # command is still writing, which is how long fills
+                        # are encoded.
+                        length = 0
+                        while length < limit and data[pos + length] == data[i + length]:
+                            length += 1
+                        if length > best_len:
+                            best_len = length
+                            best_dist = i - pos
+                            if length >= limit:
+                                break
+
+            literal = data[i]
+            # A literal command only encodes 0-127; the top bit marks a match.
+            if best_len >= Team17Compressor.MIN_MATCH:
+                Team17Compressor._emit_match(out, best_dist, best_len)
+                advance = best_len
+            elif literal < 0x80:
+                out.append(literal)
+                advance = 1
+            else:
+                # 128-255 has no literal command and no match was found, so
+                # this byte is unencodable. In practice it never happens:
+                # the literal range caps usable palette indices at 128, and
+                # every shipped asset stays well under that.
+                raise ValueError(
+                    f"cannot encode byte {literal:#04x} at offset {i}: values "
+                    "above 0x7F have no literal command and no earlier "
+                    "occurrence to copy. Palette indices must stay below 128.")
+
+            for k in range(i, min(i + advance, n - min_match + 1)):
+                chain = index.setdefault(data[k:k + min_match], [])
+                chain.append(k)
+                # Keep chains bounded. Without this they grow to the length of
+                # the file and the search degenerates even with MAX_CHAIN,
+                # because most entries are already out of range.
+                if len(chain) > max_chain:
+                    del chain[:-max_chain]
+            i += advance
+        return bytes(out)
+
+    @staticmethod
+    def _emit_match(out: bytearray, dist: int, length: int) -> None:
+        if length <= 17:
+            # 2-byte form: length = arg1+2 (so 3..17), distance = arg2+1
+            arg1 = length - 2
+            arg2 = dist - 1
+            out.append(0x80 | (arg1 << 3) | ((arg2 >> 8) & 0x07))
+            out.append(arg2 & 0xFF)
+        else:
+            # 3-byte form: length = arg3+18 (so 18..273), distance = arg2
+            arg2 = dist
+            out.append(0x80 | ((arg2 >> 8) & 0x07))
+            out.append(arg2 & 0xFF)
+            out.append(length - 18)
+
+
 class SpriteFile:
     """A Worms Armageddon sprite file (.spr).
 
@@ -881,6 +989,354 @@ class DirectoryReader:
         print(f"\nTotal: {len(self.files)} files, {total_size} bytes")
 
 
+def read_bmp(data: bytes) -> Tuple[int, int, bytes, bytes]:
+    """Read an 8-bit indexed BMP.
+
+    Returns (width, height, pixels top-down, palette as RGB triples).
+
+    spriteEditor writes the old 12-byte BITMAPCOREHEADER form with a 3-byte
+    palette, so both that and the 40-byte BITMAPINFOHEADER form are accepted.
+    """
+    if len(data) < 26 or data[:2] != b'BM':
+        raise ValueError('not a BMP')
+    pixel_offset = struct.unpack('<I', data[10:14])[0]
+    dib = struct.unpack('<I', data[14:18])[0]
+    if dib == 12:
+        width, height = struct.unpack('<HH', data[18:22])
+        bpp = struct.unpack('<H', data[24:26])[0]
+        pal_entry = 3
+        top_down = False
+    else:
+        width, height = struct.unpack('<ii', data[18:26])
+        bpp = struct.unpack('<H', data[28:30])[0]
+        pal_entry = 4
+        top_down = height < 0
+        height = abs(height)
+    if bpp != 8:
+        raise ValueError(f'expected an 8-bit BMP, got {bpp}-bit')
+
+    pal_start = 14 + dib
+    ncol = (pixel_offset - pal_start) // pal_entry
+    palette = bytearray()
+    for i in range(ncol):
+        o = pal_start + i * pal_entry
+        b, g, r = data[o], data[o + 1], data[o + 2]
+        palette += bytes((r, g, b))
+
+    stride = (width + 3) // 4 * 4
+    rows = []
+    for y in range(height):
+        start = pixel_offset + y * stride
+        rows.append(data[start:start + width])
+    if not top_down:
+        rows.reverse()          # BMP scanlines run bottom-up
+    return width, height, b''.join(rows), bytes(palette)
+
+
+def build_palette(pixels: bytes, source_palette: bytes) -> Tuple[bytes, bytes]:
+    """Compact a picture onto its own palette.
+
+    A source BMP indexes a shared 256-colour table, but a .spr or .img stores
+    only the colours it actually uses, renumbered from 1. Colour 0 is the
+    transparent background and is never stored (see SPR_FORMAT.md).
+
+    Returns the packed RGB palette and the pixels remapped onto it.
+    """
+    used = sorted(set(pixels) - {0})
+    if len(used) > 255:
+        raise ValueError(f'picture uses {len(used)} colours; the format allows 255')
+    palette = bytearray()
+    table = bytearray(256)
+    for new, old in enumerate(used, start=1):
+        table[old] = new
+        palette += source_palette[old * 3:old * 3 + 3]
+    return bytes(palette), pixels.translate(bytes(table))
+
+
+def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
+                  palette: bytes, flags: int, framerate: int,
+                  compress: bool = True) -> bytes:
+    """Build a .spr from a top-down sprite sheet of `frames` stacked cells.
+
+    Writes stream-table layout A -- the form matching the documented BNK
+    Stream struct -- with every frame in a single stream.
+    """
+    cell = width * height
+    if len(pixels) != cell * frames:
+        raise ValueError(f'expected {cell * frames} pixels, got {len(pixels)}')
+
+    # Crop each frame to the pixels that are actually set. Index 0 is the
+    # transparent background and is excluded from the box, exactly as the
+    # game's own tools do.
+    boxes: List[Tuple[int, int, int, int]] = []
+    crops: List[bytes] = []
+    for i in range(frames):
+        frame = pixels[i * cell:(i + 1) * cell]
+        left, top, right, bottom = width, height, 0, 0
+        for y in range(height):
+            row = frame[y * width:(y + 1) * width]
+            for x in range(width):
+                if row[x]:
+                    if x < left:
+                        left = x
+                    if x >= right:
+                        right = x + 1
+                    if y < top:
+                        top = y
+                    if y >= bottom:
+                        bottom = y + 1
+        if right <= left or bottom <= top:
+            left = top = right = bottom = 0        # empty frame
+        crop = bytearray()
+        for y in range(top, bottom):
+            crop += frame[y * width + left:y * width + right]
+        crops.append(bytes(crop))
+        boxes.append((left, top, right, bottom))
+
+    # A frame's data_pos is only 16 bits, so a stream cannot exceed 64 KB.
+    # Start a new stream whenever the next frame would overflow it; this is
+    # why the game's own large sprites carry many streams (front.spr has one
+    # per frame).
+    streams: List[bytearray] = [bytearray()]
+    placement: List[Tuple[int, int]] = []          # (stream index, offset)
+    for crop in crops:
+        if streams[-1] and len(streams[-1]) + len(crop) > 0xFFFF:
+            streams.append(bytearray())
+        placement.append((len(streams) - 1, len(streams[-1])))
+        streams[-1] += crop
+
+    ncol = len(palette) // 3
+    out = bytearray()
+    out += SpriteFile.SIGNATURE
+    out += struct.pack('<I', 0)                    # file length, filled below
+    out += struct.pack('<H', 0x8008 | (SpriteFile.COMPRESSED_FLAG if compress else 0))
+    out += struct.pack('<H', ncol)
+    out += palette
+
+    body = bytearray()
+    if compress:
+        encoded = [Team17Compressor.compress(bytes(b)) for b in streams]
+        body += struct.pack('<I', len(streams))
+        body += b'\x00' * (ncol % 4)               # align the stream table
+        # Layout C: (unused, decompressed length, position of the NEXT
+        # stream). Stream 0 starts at 0 and the final record's position is 0
+        # (see SPR_FORMAT.md). The sprite record follows immediately; the
+        # frame rate occupies the last 2 bytes of the final stream record.
+        pos = 0
+        for k, (raw, enc) in enumerate(zip(streams, encoded)):
+            pos += len(enc)
+            nxt = pos if k < len(streams) - 1 else 0
+            if k < len(streams) - 1:
+                body += struct.pack('<III', 0, len(raw), nxt)
+            else:
+                body += struct.pack('<IIHH', 0, len(raw), 0, framerate)
+        stream = b''.join(encoded)
+    else:
+        # Uncompressed sprites use a different layout entirely: no stream
+        # count, no stream table, and the frame offset split across two
+        # fields (see SPR_FORMAT.md). Writing it is not implemented -- every
+        # sprite the game ships in a .dir is compressed.
+        raise NotImplementedError(
+            'writing uncompressed sprites is not supported; pass compress=True')
+
+    body += struct.pack('<HHHH', flags, width, height, frames)
+    for (left, top, right, bottom), (sidx, off) in zip(boxes, placement):
+        # data_pos, then the stream number shifted left by 8.
+        body += struct.pack('<HHHHHH', off, sidx * 256,
+                            left, top, right, bottom)
+    body += stream
+
+    out += body
+    struct.pack_into('<I', out, 4, len(out))
+    return bytes(out)
+
+
+def encode_image(width: int, height: int, pixels: bytes, palette: bytes,
+                 compress: bool = True) -> bytes:
+    """Build an .img from a top-down 8-bit picture."""
+    if len(pixels) != width * height:
+        raise ValueError(f'expected {width * height} pixels, got {len(pixels)}')
+    ncol = len(palette) // 3
+    flags = ImageFile.PALETTE_FLAG | (ImageFile.COMPRESSED_FLAG if compress else 0)
+
+    out = bytearray()
+    out += ImageFile.SIGNATURE
+    out += struct.pack('<I', 0)                    # file length, filled below
+    out += bytes((8, flags))                       # bits per pixel, flags
+    out += struct.pack('<H', ncol)
+    out += palette
+    out += struct.pack('<HH', width, height)
+    out += Team17Compressor.compress(pixels) if compress else pixels
+    struct.pack_into('<I', out, 4, len(out))
+    return bytes(out)
+
+
+def read_spd(text: str) -> Dict[str, int]:
+    """Parse the `key = value` metadata spriteEditor writes beside a sprite."""
+    out: Dict[str, int] = {}
+    for line in text.splitlines():
+        if '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        try:
+            out[key.strip().lower()] = int(value.strip())
+        except ValueError:
+            pass
+    return out
+
+
+class DirectoryWriter:
+    """Builds a .dir archive.
+
+    Layout, matching what the game's own tools produce:
+
+        12 bytes  "DIR\\x1A", total file length, offset of the TOC
+        ...       each file's data, separated by a single 0x1A byte
+        4 bytes   TOC signature, 0x0000000A
+        4096      1024-entry hash table; each slot holds the offset (relative
+                  to the TOC) of the first entry with that name hash, or 0
+        ...       entry records: next-entry offset, data offset, data length,
+                  then the NUL-terminated name padded to a 4-byte boundary
+
+    Entries keep the order they were added, which is the order of the
+    accompanying .dir.txt listing.
+    """
+
+    SIGNATURE = b'DIR\x1A'
+    TOC_SIGNATURE = 0x0000000A
+    HASH_SIZE = 1024
+
+    def __init__(self) -> None:
+        self.entries: List[Tuple[str, bytes]] = []
+
+    def add(self, name: str, data: bytes) -> None:
+        self.entries.append((name, data))
+
+    @staticmethod
+    def hash_name(name: str) -> int:
+        """The game's name hash (see the Graphics directory documentation)."""
+        bits = 10
+        size = 1 << bits
+        total = 0
+        for ch in name.encode('latin-1', 'replace'):
+            total = ((total << 1) % size) | ((total >> (bits - 1)) & 1)
+            total = (total + ch) % size
+        return total
+
+    def build(self) -> bytes:
+        out = bytearray(self.SIGNATURE + b'\x00' * 8)
+        offsets: List[Tuple[str, int, int]] = []
+        for pos, (name, data) in enumerate(self.entries):
+            offsets.append((name, len(out), len(data)))
+            out += data
+            # A single 0x1A byte separates consecutive files -- the same EOF
+            # marker Team17 uses in its signatures. The last file is not
+            # followed by one; the TOC begins immediately after it.
+            if pos != len(self.entries) - 1:
+                out += b'\x1a'
+
+        toc_offset = len(out)
+
+        # Entry records come after the hash table; size them first so the
+        # table can point at them.
+        table_bytes = 4 + self.HASH_SIZE * 4
+        records: List[Tuple[str, int, bytes]] = []
+        pos = table_bytes
+        for name, off, length in offsets:
+            raw = name.encode('latin-1', 'replace') + b'\x00'
+            pad = (4 - (12 + len(raw)) % 4) % 4
+            records.append((name, pos, raw + b'\x00' * pad))
+            pos += 12 + len(raw) + pad
+
+        # Chain entries that share a hash slot. The game walks the chain, so
+        # order within a slot does not matter; keep insertion order.
+        buckets: Dict[int, List[int]] = {}
+        for idx, (name, _p, _r) in enumerate(records):
+            buckets.setdefault(self.hash_name(name), []).append(idx)
+
+        next_of = [0] * len(records)
+        head = [0] * self.HASH_SIZE
+        for slot, members in buckets.items():
+            head[slot] = records[members[0]][1]
+            for a, b in zip(members, members[1:]):
+                next_of[a] = records[b][1]
+
+        toc = bytearray()
+        toc += struct.pack('<I', self.TOC_SIGNATURE)
+        for slot in range(self.HASH_SIZE):
+            toc += struct.pack('<I', head[slot])
+        for idx, (name, _p, raw) in enumerate(records):
+            _n, off, length = offsets[idx]
+            toc += struct.pack('<III', next_of[idx], off, length)
+            toc += raw
+
+        out += toc
+        struct.pack_into('<I', out, 4, len(out))
+        struct.pack_into('<I', out, 8, toc_offset)
+        return bytes(out)
+
+
+def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
+                compress_img: bool, opaque: bool) -> Optional[Tuple[bytes, bool]]:
+    """Produce the bytes for one archive entry.
+
+    `base` is the path the listing points at, without any added extension.
+    Returns (payload, was_encoded) or None when no source file exists.
+
+    With `recreate` set, a sprite or image is rebuilt from its BMP whenever
+    one is present, so edits to the BMP take effect. Otherwise an existing
+    binary is preferred and the BMP is only a fallback.
+    """
+    bmp_path = base + '.bmp'
+    lower = name.lower()
+    is_spr = lower.endswith('.spr')
+    is_img = lower.endswith('.img')
+
+    def existing() -> Optional[Tuple[bytes, bool]]:
+        if os.path.exists(base):
+            with open(base, 'rb') as fh:
+                return fh.read(), False
+        return None
+
+    if not (is_spr or is_img):
+        return existing()            # .inf, .txt and friends are copied as-is
+
+    if not recreate:
+        found = existing()
+        if found is not None:
+            return found
+
+    if not os.path.exists(bmp_path):
+        return existing()
+
+    with open(bmp_path, 'rb') as fh:
+        width, height, pixels, source_palette = read_bmp(fh.read())
+
+    if opaque and is_img:
+        # Opaque images have no transparent index, so shift every colour up
+        # by one to free index 0 rather than letting colour 0 vanish.
+        pixels = bytes(min(p + 1, 255) for p in pixels)
+        source_palette = b'\x00\x00\x00' + source_palette
+
+    palette, remapped = build_palette(pixels, source_palette)
+
+    if is_img:
+        return encode_image(width, height, remapped, palette,
+                            compress=compress_img), True
+
+    meta = {}
+    spd_path = base + '.spd'
+    if os.path.exists(spd_path):
+        with open(spd_path, 'r', encoding='latin-1') as fh:
+            meta = read_spd(fh.read())
+    frames = meta.get('frames', 1)
+    cell_w = meta.get('width', width)
+    cell_h = meta.get('height', height // max(frames, 1))
+    return encode_sprite(cell_w, cell_h, frames, remapped, palette,
+                         meta.get('flags', 1), meta.get('framerate', 0),
+                         compress=compress_spr), True
+
+
 def print_help():
     """Print help message"""
     print(f"wa-py-spriteHelper v{__version__}")
@@ -888,6 +1344,11 @@ def print_help():
     print("\nUsage: wa-py-spriteHelper.py <command> [options]")
     print("\nCommands:")
     print("  extract <dir_file> [output_dir]   Extract all files from .dir")
+    print("  pack <name>.dir.txt [output_dir]")
+    print("                                    Build <name>.dir from a listing file")
+    print("                                    --no-compress-img  store images raw")
+    print("                                    --no-recreate      reuse existing .spr/.img")
+    print("                                    --opaque-img       no transparent colour")
     print("  decompress <dir_file> [output_dir] [--gif]")
     print("                                    Decode sprites to raw pixels, BMP and .spd")
     print("                                    --gif also writes animated GIFs (slow)")
@@ -1042,6 +1503,80 @@ def main():
             print(f"Could not decode {len(failed)} sprites "
                   f"(unsupported SPR layout variant): {', '.join(failed[:5])}"
                   + (' ...' if len(failed) > 5 else ''))
+        return 0
+
+    elif command == "pack":
+        args = [a for a in sys.argv[2:] if not a.startswith('-')]
+        opts = [a for a in sys.argv[2:] if a.startswith('-')]
+        known = {'--no-compress-spr', '--no-compress-img',
+                 '--no-recreate', '--opaque-img'}
+        unknown = [o for o in opts if o not in known]
+        if unknown:
+            print(f"Error: unknown option(s): {', '.join(unknown)}")
+            return 1
+
+        compress_spr = '--no-compress-spr' not in opts
+        compress_img = '--no-compress-img' not in opts
+        recreate = '--no-recreate' not in opts
+        opaque = '--opaque-img' in opts
+
+        if not args:
+            print("Error: pack requires a <name>.dir.txt listing file")
+            return 1
+        listing = args[0]
+        if not listing.lower().endswith('.dir.txt'):
+            print(f"Error: expected a file named <name>.dir.txt, got "
+                  f"{os.path.basename(listing)}")
+            return 1
+        if not os.path.exists(listing):
+            print(f"Error: File not found: {listing}")
+            return 1
+
+        source_dir = os.path.dirname(os.path.abspath(listing))
+        stem = os.path.basename(listing)[:-len('.dir.txt')]
+        out_path = os.path.join(args[1] if len(args) > 1 else source_dir,
+                                stem.lower() + '.dir')
+
+        with open(listing, 'r', encoding='latin-1') as fh:
+            names = [ln.strip() for ln in fh if ln.strip()]
+
+        writer = DirectoryWriter()
+        built = reused = 0
+        problems: List[str] = []
+        for name in names:
+            rel = name.replace('\\', os.sep)
+            base = os.path.join(source_dir, rel)
+            try:
+                data = _pack_entry(base, name, recreate, compress_spr,
+                                   compress_img, opaque)
+            except Exception as exc:
+                problems.append(f"{name}: {exc}")
+                continue
+            if data is None:
+                problems.append(f"{name}: no source file found")
+                continue
+            payload, was_built = data
+            writer.add(name, payload)
+            built += was_built
+            reused += not was_built
+
+        if problems:
+            print(f"Could not pack {len(problems)} of {len(names)} entries:")
+            for p in problems[:10]:
+                print(f"  {p}")
+            if len(problems) > 10:
+                print(f"  ... and {len(problems) - 10} more")
+            return 1
+
+        archive = writer.build()
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+        with open(out_path, 'wb') as fh:
+            fh.write(archive)
+
+        print(f"Packed {len(names)} entries into {out_path}")
+        print(f"  encoded from source images: {built}")
+        print(f"  copied unchanged:           {reused}")
+        print(f"  archive size:               {len(archive):,} bytes")
         return 0
 
     elif command == "list":
