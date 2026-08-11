@@ -21,10 +21,14 @@ except ImportError:  # optional; only affects GIF output
 
 __version__ = "0.3.0"
 
-# Upper bound used to sanity-check decoded sprite dimensions. Custom level
-# themes ship full-screen backdrops (1280x370, 1024x250), so a limit tuned to
-# Gfx.dir's 60x60 cells silently rejects perfectly good files.
+# Sanity bound on decoded sprite dimensions. Level themes ship full-screen
+# backdrops, the largest seen being 1280x370.
 MAX_DIM = 8192
+
+# Highest offset a frame may start at within its stream. The game's own
+# archives never exceed it, and matching the rule reproduces their stream
+# splitting exactly; see encode_sprite.
+MAX_DATA_POS = 16384
 
 
 class DecompressionError(Exception):
@@ -131,10 +135,11 @@ class Team17Decompressor:
 class Team17Compressor:
     """Produces streams that `Team17Decompressor` can read back.
 
-    The format allows many valid encodings of the same data, so output will
-    not be byte-identical to Team17's own tools; it only has to decode to the
-    same bytes. Correctness is checked by round-tripping, never by comparing
-    against a reference encoder's output.
+    The format allows many valid encodings of the same data, so output is not
+    byte-identical to Team17's own tools; it only has to decode to the same
+    bytes. Round-tripping through `Team17Decompressor` is necessary but not
+    sufficient evidence of that -- it shares this module's assumptions, so a
+    stream both agree on can still be one the game reads differently.
 
     Command set (mirrors the decompressor):
         0xxxxxxx                    literal colour index, 0-127
@@ -201,9 +206,8 @@ class Team17Compressor:
                 advance = 1
             else:
                 # 128-255 has no literal command and no match was found, so
-                # this byte is unencodable. In practice it never happens:
-                # the literal range caps usable palette indices at 128, and
-                # every shipped asset stays well under that.
+                # this byte is unencodable. The largest palette in any shipped
+                # archive is 96 colours, so it does not arise in practice.
                 raise ValueError(
                     f"cannot encode byte {literal:#04x} at offset {i}: values "
                     "above 0x7F have no literal command and no earlier "
@@ -218,6 +222,11 @@ class Team17Compressor:
                 if len(chain) > max_chain:
                     del chain[:-max_chain]
             i += advance
+
+        # Every stream Team17 ships ends with this marker. Our decompressor
+        # stops once the buffer is full and so never needs it, which is why
+        # omitting it still round-trips here -- match the reference anyway.
+        out += b'\x80\x00'
         return bytes(out)
 
     @staticmethod
@@ -240,9 +249,8 @@ class SpriteFile:
     """A Worms Armageddon sprite file (.spr).
 
     The layout was reverse engineered against spriteEditor's output; see
-    SPR_FORMAT.md. Three compressed stream-table layouts exist; which applies
-    is decided by the palette length and stream count. Uncompressed sprites
-    have no stream table at all and take a separate path.
+    SPR_FORMAT.md. Uncompressed sprites have no stream table and take a
+    separate path.
 
         0   "SPR\\x1A"
         4   u32  file length
@@ -250,10 +258,22 @@ class SpriteFile:
         10  u16  palette entry count
         12  palette, 3 bytes per entry, RGB, starting at colour 1
             u32  stream count
-            Stream[] 12 bytes each -- field order differs per variant
-            Sprite   u16 flags, width, height, frame count
+            pad to a 4-byte boundary
+            Stream[] 12 bytes each, in one of two field orders (below)
+            Sprite   u16 frame rate, flags, width, height, frame count
             Frame[]  u16 data_pos, stream_selector, left, up, right, down
             stream data (offsets relative to here)
+
+    `ncol % 4` alone selects the stream-table layout, and the sprite record
+    always begins at a file offset congruent to 2 mod 4 -- the two layouts
+    reach that offset from opposite sides:
+
+        ncol % 4 in (0, 1)  (position, unused, decompressed length)
+                            whole records, then two bytes of padding
+        ncol % 4 in (2, 3)  (unused, decompressed length, position of the
+                            NEXT stream); stream 0 starts at 0, so the last
+                            record's position is meaningless and its final
+                            two bytes are simply not written
 
     A frame holds only its cropped bounding box within the sprite cell;
     `left`/`up`/`right`/`down` are measured from the top-left, and frames are
@@ -277,40 +297,11 @@ class SpriteFile:
     def parse(self) -> bool:
         if len(self.data) < 12 or self.data[0:4] != self.SIGNATURE:
             return False
-        if not self.is_compressed:
-            try:
-                return self._parse_uncompressed()
-            except (struct.error, IndexError, ValueError):
-                return False
-        # The stream-table layout is predictable from the header: the palette
-        # length decides whether positions are stored outright, and for the
-        # packed layouts the stream count decides which of the two is used.
-        # Verified against 2005 sprites (Gfx.dir plus 140 third-party level
-        # themes) with no exceptions -- see SPR_FORMAT.md. The remaining
-        # variants are still tried as a fallback so an unseen file degrades to
-        # the old search rather than failing outright.
         try:
-            ncol, _p, nstream = self._header()
-            if ncol % 4 in (0, 1):
-                order = (self._parse_positional, self._parse_cumulative,
-                         self._parse_next_position)
-            elif nstream <= 2:
-                order = (self._parse_cumulative, self._parse_next_position,
-                         self._parse_positional)
-            else:
-                order = (self._parse_next_position, self._parse_cumulative,
-                         self._parse_positional)
-        except (struct.error, IndexError, ValueError):
-            order = (self._parse_positional, self._parse_cumulative,
-                     self._parse_next_position)
-
-        for variant in order:
-            try:
-                if variant():
-                    return True
-            except (struct.error, IndexError, ValueError, DecompressionError):
-                continue
-        return False
+            return (self._parse_compressed() if self.is_compressed
+                    else self._parse_uncompressed())
+        except (struct.error, IndexError, ValueError, DecompressionError):
+            return False
 
     @property
     def is_compressed(self) -> bool:
@@ -322,25 +313,20 @@ class SpriteFile:
         ncol = struct.unpack('<H', self.data[10:12])[0]
         p = 12 + ncol * 3
         nstream = struct.unpack('<I', self.data[p:p + 4])[0]
-        # Custom level themes ship far larger sprites than Gfx.dir: the Coral
-        # Reef backdrop is 1024x250 with 128 streams. Keep a sanity bound, but
-        # a low one silently rejects legitimate files.
+        # A level backdrop runs to 128 streams, well past anything in Gfx.dir.
         if not 0 < nstream <= 4096:
             raise ValueError('implausible stream count')
         return ncol, p, nstream
 
-    def _finish(self, ncol, p, so, blobs, sprite_size: int = 8) -> bool:
-        flags, w, h, fc = struct.unpack('<HHHH', self.data[so:so + 8])
+    def _finish(self, ncol, p, rec, ft, blobs) -> bool:
+        """Read the sprite record at `rec` and the frame table at `ft`."""
+        rate, flags, w, h, fc = struct.unpack('<HHHHH', self.data[rec:rec + 10])
         if not (0 < w <= MAX_DIM and 0 < h <= MAX_DIM and 0 < fc <= 4096):
             return False
-        ft = so + sprite_size
         if ft + fc * 12 > len(self.data):
             return False
-        self.flags, self.width, self.height, self.frames = flags, w, h, fc
-        # The frame rate sits in the u16 immediately before the sprite record
-        # (verified against every .spd spriteEditor writes).
-        self.framerate = (struct.unpack('<H', self.data[so - 2:so])[0]
-                          if so >= 2 else 0)
+        self.framerate, self.flags = rate, flags
+        self.width, self.height, self.frames = w, h, fc
         self.palette = self.data[12:p]
         self.blobs = blobs
         self.recs = [struct.unpack('<HHHHHH', self.data[ft + i * 12:ft + i * 12 + 12])
@@ -357,90 +343,43 @@ class SpriteFile:
         """
         ncol = struct.unpack('<H', self.data[10:12])[0]
         p = 12 + ncol * 3
-        so = p + 4
-        if so + 8 > len(self.data):
-            return False
-        _f, w, h, fc = struct.unpack('<HHHH', self.data[so:so + 8])
-        if not (0 < w <= MAX_DIM and 0 < h <= MAX_DIM and 0 < fc <= 4096):
-            return False
-        # The frame table is aligned the same way the stream table is in the
-        # compressed variant: pad the 8-byte sprite record by ncol % 4.
-        sprite_size = 8 + (ncol % 4)
-        ds = so + sprite_size + fc * 12
+        rec = p + 2
+        # The frame table is aligned the way the stream table is in the
+        # compressed form: pad the sprite record by ncol % 4.
+        ft = rec + 10 + (ncol % 4)
+        ds = ft + struct.unpack('<H', self.data[rec + 8:rec + 10])[0] * 12
         if ds > len(self.data):
             return False
-        return self._finish(ncol, p, so, [self.data[ds:]], sprite_size=sprite_size)
+        return self._finish(ncol, p, rec, ft, [self.data[ds:]])
 
-    def _parse_positional(self) -> bool:
-        """Stream record = (position, unused, decompressed_length)."""
-        ncol, p, nstream = self._header()
-        q = p + 4 + (ncol % 4)
-        so = q + nstream * 12 + 4
-        if so + 8 > len(self.data):
-            return False
-        _f, w, h, fc = struct.unpack('<HHHH', self.data[so:so + 8])
-        if not (0 < w <= MAX_DIM and 0 < h <= MAX_DIM and 0 < fc <= 4096):
-            return False
-        ds = so + 8 + fc * 12
-        recs = [struct.unpack('<III', self.data[q + k * 12:q + k * 12 + 12])
-                for k in range(nstream)]
-        blobs = [Team17Decompressor.decompress(self.data[ds + pos:], dlen) if dlen else b''
-                 for (pos, _u, dlen) in recs]
-        return self._finish(ncol, p, so, blobs)
+    def _parse_compressed(self) -> bool:
+        """Read the stream table, then the frames it holds.
 
-    def _parse_cumulative(self) -> bool:
-        """Stream record = (unused, decompressed_length, compressed_size);
-        stream positions are the running total of the compressed sizes."""
-        ncol, p, nstream = self._header()
-        q = p + 4 + (ncol % 4)
-        so = q + nstream * 12
-        if so + 8 > len(self.data):
-            return False
-        _f, w, h, fc = struct.unpack('<HHHH', self.data[so:so + 8])
-        if not (0 < w <= MAX_DIM and 0 < h <= MAX_DIM and 0 < fc <= 4096):
-            return False
-        ds = so + 8 + fc * 12
-        if ds > len(self.data):
-            return False
-        recs = [struct.unpack('<III', self.data[q + k * 12:q + k * 12 + 12])
-                for k in range(nstream)]
-        blobs = []
-        pos = 0
-        for (_u, dlen, csize) in recs:
-            blobs.append(Team17Decompressor.decompress(self.data[ds + pos:], dlen)
-                         if dlen else b'')
-            pos += csize
-        return self._finish(ncol, p, so, blobs)
-
-    def _parse_next_position(self) -> bool:
-        """Stream record = (unused, decompressed_length, position_of_NEXT stream).
-
-        The position field is off by one: stream k begins where record k-1 says
-        the next stream starts, and stream 0 begins at 0. The final record's
-        position is 0 (unused). Field 1 is corroborated independently by the
-        frame table -- the largest `data_pos + box area` referring to stream k
-        equals record k's length exactly.
+        Both field orders carry the decompressed length; they differ in how a
+        stream's position is found. See the class docstring for the layouts.
         """
         ncol, p, nstream = self._header()
-        q = p + 4 + (ncol % 4)
-        so = q + nstream * 12
-        if so + 8 > len(self.data):
-            return False
-        _f, w, h, fc = struct.unpack('<HHHH', self.data[so:so + 8])
-        if not (0 < w <= MAX_DIM and 0 < h <= MAX_DIM and 0 < fc <= 4096):
-            return False
-        ds = so + 8 + fc * 12
+        q = p + 4 + (ncol % 4)              # stream table, 4-byte aligned
+        positional = ncol % 4 in (0, 1)
+        rec = q + nstream * 12 + (2 if positional else -2)
+        ft = rec + 10
+        fc = struct.unpack('<H', self.data[rec + 8:rec + 10])[0]
+        ds = ft + fc * 12
         if ds > len(self.data):
             return False
+
+        # The last record of the non-positional form is two bytes short, so
+        # its position field is never read -- only records 0..n-2 supply one.
         recs = [struct.unpack('<III', self.data[q + k * 12:q + k * 12 + 12])
                 for k in range(nstream)]
-        blobs = []
-        for k in range(nstream):
-            pos = 0 if k == 0 else recs[k - 1][2]
-            dlen = recs[k][1]
-            blobs.append(Team17Decompressor.decompress(self.data[ds + pos:], dlen)
-                         if dlen else b'')
-        return self._finish(ncol, p, so, blobs)
+        if positional:
+            spans = [(r[0], r[2]) for r in recs]
+        else:
+            spans = [(0 if k == 0 else recs[k - 1][2], recs[k][1])
+                     for k in range(nstream)]
+        blobs = [Team17Decompressor.decompress(self.data[ds + pos:], dlen)
+                 if dlen else b'' for pos, dlen in spans]
+        return self._finish(ncol, p, rec, ft, blobs)
 
     def render_frame(self, index: int) -> Optional[bytes]:
         """Frame as width*height palette indices in top-down row order."""
@@ -843,6 +782,7 @@ class ImageFile:
         i += 4
         if not (0 < self.width <= 4096 and 0 < self.height <= 4096):
             return False
+        i += -i % 4                     # image data starts 4-byte aligned
         need = self.width * self.height
         if self.flags & self.COMPRESSED_FLAG:
             try:
@@ -1042,7 +982,15 @@ def build_palette(pixels: bytes, source_palette: bytes) -> Tuple[bytes, bytes]:
 
     Returns the packed RGB palette and the pixels remapped onto it.
     """
-    used = sorted(set(pixels) - {0})
+    # Order by first appearance scanning the pixels top-down. This reproduces
+    # spriteEditor's palettes exactly; ordering by source index instead yields
+    # the right colours in the wrong order.
+    used: List[int] = []
+    seen = bytearray(256)
+    for value in pixels:
+        if value and not seen[value]:
+            seen[value] = 1
+            used.append(value)
     if len(used) > 255:
         raise ValueError(f'picture uses {len(used)} colours; the format allows 255')
     palette = bytearray()
@@ -1056,10 +1004,10 @@ def build_palette(pixels: bytes, source_palette: bytes) -> Tuple[bytes, bytes]:
 def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
                   palette: bytes, flags: int, framerate: int,
                   compress: bool = True) -> bytes:
-    """Build a .spr from a top-down sprite sheet of `frames` stacked cells.
+    """Build a compressed .spr from a top-down sheet of `frames` stacked cells.
 
-    Writes stream-table layout A -- the form matching the documented BNK
-    Stream struct -- with every frame in a single stream.
+    Frames are cropped to their ink and packed into streams; which stream-table
+    layout is written follows from the palette length, as SpriteFile describes.
     """
     cell = width * height
     if len(pixels) != cell * frames:
@@ -1086,24 +1034,35 @@ def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
                     if y >= bottom:
                         bottom = y + 1
         if right <= left or bottom <= top:
-            left = top = right = bottom = 0        # empty frame
+            # A frame with no ink still needs a non-empty box. None of the
+            # reference archive's 9181 frames has a zero-area one; blank
+            # frames get 1x1 at the origin, so do the same.
+            left = top = 0
+            right = bottom = 1
         crop = bytearray()
         for y in range(top, bottom):
             crop += frame[y * width + left:y * width + right]
         crops.append(bytes(crop))
         boxes.append((left, top, right, bottom))
 
-    # A frame's data_pos is only 16 bits, so a stream cannot exceed 64 KB.
-    # Start a new stream whenever the next frame would overflow it; this is
-    # why the game's own large sprites carry many streams (front.spr has one
-    # per frame).
+    # A frame may not START beyond MAX_DATA_POS within its stream, so split
+    # the frames into streams on that bound. This bounds the offset, not the
+    # stream: a stream holding a single oversized frame may be far larger
+    # (414,720 bytes is the largest in the reference archive). Following the
+    # rule reproduces the reference's stream counts exactly.
     streams: List[bytearray] = [bytearray()]
+    frames_in_stream = [0]
     placement: List[Tuple[int, int]] = []          # (stream index, offset)
     for crop in crops:
-        if streams[-1] and len(streams[-1]) + len(crop) > 0xFFFF:
+        # Start a new stream when appending would push this one past the
+        # bound. A stream may only exceed it while holding a single frame,
+        # which is how the game's own huge backdrops are stored.
+        if frames_in_stream[-1] and len(streams[-1]) + len(crop) > MAX_DATA_POS:
             streams.append(bytearray())
+            frames_in_stream.append(0)
         placement.append((len(streams) - 1, len(streams[-1])))
         streams[-1] += crop
+        frames_in_stream[-1] += 1
 
     ncol = len(palette) // 3
     out = bytearray()
@@ -1118,18 +1077,25 @@ def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
         encoded = [Team17Compressor.compress(bytes(b)) for b in streams]
         body += struct.pack('<I', len(streams))
         body += b'\x00' * (ncol % 4)               # align the stream table
-        # Layout C: (unused, decompressed length, position of the NEXT
-        # stream). Stream 0 starts at 0 and the final record's position is 0
-        # (see SPR_FORMAT.md). The sprite record follows immediately; the
-        # frame rate occupies the last 2 bytes of the final stream record.
+        # Two record layouts, selected by ncol % 4 alone -- see SpriteFile.
+        positional = ncol % 4 in (0, 1)
         pos = 0
         for k, (raw, enc) in enumerate(zip(streams, encoded)):
-            pos += len(enc)
-            nxt = pos if k < len(streams) - 1 else 0
-            if k < len(streams) - 1:
-                body += struct.pack('<III', 0, len(raw), nxt)
+            nxt = pos + len(enc)
+            last = k == len(streams) - 1
+            if positional:
+                # (position of THIS stream, unused, decompressed length)
+                body += struct.pack('<III', pos, 0, len(raw))
+            elif last:
+                # (unused, decompressed length, position where the NEXT
+                # stream begins). The reader takes stream k's position from
+                # record k-1, with stream 0 at 0, so the last stream has no
+                # next position and the field is simply not written -- the
+                # table ends two bytes short of a whole record.
+                body += struct.pack('<IIH', 0, len(raw), 0)
             else:
-                body += struct.pack('<IIHH', 0, len(raw), 0, framerate)
+                body += struct.pack('<III', 0, len(raw), nxt)
+            pos = nxt
         stream = b''.join(encoded)
     else:
         # Uncompressed sprites use a different layout entirely: no stream
@@ -1139,7 +1105,13 @@ def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
         raise NotImplementedError(
             'writing uncompressed sprites is not supported; pass compress=True')
 
-    body += struct.pack('<HHHH', flags, width, height, frames)
+    # Pad so the record lands at an offset congruent to 2 mod 4; the other
+    # layout gets there by stopping two bytes early instead. The record leads
+    # with the frame rate, so it must come from the .spd -- an animated sprite
+    # left at 0 divides by zero in the game's animation code.
+    if positional:
+        body += b'\x00\x00'
+    body += struct.pack('<HHHHH', framerate, flags, width, height, frames)
     for (left, top, right, bottom), (sidx, off) in zip(boxes, placement):
         # data_pos, then the stream number shifted left by 8.
         body += struct.pack('<HHHHHH', off, sidx * 256,
@@ -1166,6 +1138,12 @@ def encode_image(width: int, height: int, pixels: bytes, palette: bytes,
     out += struct.pack('<H', ncol)
     out += palette
     out += struct.pack('<HH', width, height)
+    # The image data starts on a 4-byte boundary. The wiki documents this only
+    # for images inside land.dat, but every .img in a level archive has it too
+    # (1563 unaligned-header images across the shipped archives, all padded
+    # with zeros). Omitting it makes the game start decoding one or two bytes
+    # into the stream, which yields garbage rather than an error.
+    out += b'\x00' * (-len(out) % 4)
     out += Team17Compressor.compress(pixels) if compress else pixels
     struct.pack_into('<I', out, 4, len(out))
     return bytes(out)
