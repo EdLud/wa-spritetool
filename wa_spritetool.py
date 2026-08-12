@@ -262,7 +262,7 @@ class SpriteFile:
             Stream[] 12 bytes each, in one of two field orders (below)
             Sprite   u16 frame rate, flags, width, height, frame count
             Frame[]  u16 data_pos, stream_selector, left, up, right, down
-            stream data (offsets relative to here)
+            stream data (offsets relative to here)  q
 
     `ncol % 4` alone selects the stream-table layout, and the sprite record
     always begins at a file offset congruent to 2 mod 4 -- the two layouts
@@ -293,25 +293,45 @@ class SpriteFile:
         self.palette: bytes = b''
         self.blobs: List[bytes] = []
         self.recs: List[Tuple[int, int, int, int, int, int]] = []
+        self.description = ''
+        self.base = 8               # offset of the flags word
 
     def parse(self) -> bool:
         if len(self.data) < 12 or self.data[0:4] != self.SIGNATURE:
             return False
         try:
+            self._read_description()
             return (self._parse_compressed() if self.is_compressed
                     else self._parse_uncompressed())
         except (struct.error, IndexError, ValueError, DecompressionError):
             return False
 
+    def _read_description(self) -> None:
+        """Online Worms names its sprites in the file, ahead of the flags word.
+
+        The flags always have bit 0x8000 set, which no letter pair produces,
+        so its absence marks the older form -- the same trick ImageFile uses
+        to spot a description there.
+        """
+        if struct.unpack('<H', self.data[8:10])[0] & 0x8000:
+            return
+        end = self.data.find(b'\x00', 8)
+        if end < 0:
+            raise ValueError('unterminated sprite description')
+        self.description = self.data[8:end].decode('latin-1', 'replace')
+        self.base = end + 1
+
     @property
     def is_compressed(self) -> bool:
         """Uncompressed sprites (flag bit clear) store raw cropped pixels and
         have no stream table; Gfx0.dir is entirely uncompressed."""
-        return bool(struct.unpack('<H', self.data[8:10])[0] & self.COMPRESSED_FLAG)
+        b = self.base
+        return bool(struct.unpack('<H', self.data[b:b + 2])[0] & self.COMPRESSED_FLAG)
 
     def _header(self):
-        ncol = struct.unpack('<H', self.data[10:12])[0]
-        p = 12 + ncol * 3
+        b = self.base
+        ncol = struct.unpack('<H', self.data[b + 2:b + 4])[0]
+        p = b + 4 + ncol * 3
         nstream = struct.unpack('<I', self.data[p:p + 4])[0]
         # A level backdrop runs to 128 streams, well past anything in Gfx.dir.
         if not 0 < nstream <= 4096:
@@ -327,9 +347,11 @@ class SpriteFile:
             return False
         self.framerate, self.flags = rate, flags
         self.width, self.height, self.frames = w, h, fc
-        self.palette = self.data[12:p]
+        self.palette = self.data[self.base + 4:p]
         self.blobs = blobs
-        self.recs = [struct.unpack('<HHHHHH', self.data[ft + i * 12:ft + i * 12 + 12])
+        # The box is signed: a frame may hang off the left or top of its
+        # cell (WWPA's scrolling water layers start at left = -4).
+        self.recs = [struct.unpack('<HHhhhh', self.data[ft + i * 12:ft + i * 12 + 12])
                      for i in range(fc)]
         return True
 
@@ -341,8 +363,9 @@ class SpriteFile:
         pad byte, the frame table, then the cropped frame pixels laid out
         contiguously. All frame data is treated as a single implicit stream.
         """
-        ncol = struct.unpack('<H', self.data[10:12])[0]
-        p = 12 + ncol * 3
+        b = self.base
+        ncol = struct.unpack('<H', self.data[b + 2:b + 4])[0]
+        p = b + 4 + ncol * 3
         rec = p + 2
         # The frame table is aligned the way the stream table is in the
         # compressed form: pad the sprite record by ncol % 4.
@@ -359,8 +382,15 @@ class SpriteFile:
         stream's position is found. See the class docstring for the layouts.
         """
         ncol, p, nstream = self._header()
-        q = p + 4 + (ncol % 4)              # stream table, 4-byte aligned
-        positional = ncol % 4 in (0, 1)
+        if self.description:
+            # Online Worms pads the stream count by a fixed two bytes and only
+            # ever uses the next-position field order, whatever the palette
+            # length -- measured across 1716 of its sprites.
+            q = p + 6
+            positional = False
+        else:
+            q = p + 4 + (ncol % 4)          # stream table, 4-byte aligned
+            positional = ncol % 4 in (0, 1)
         rec = q + nstream * 12 + (2 if positional else -2)
         ft = rec + 10
         fc = struct.unpack('<H', self.data[rec + 8:rec + 10])[0]
@@ -404,13 +434,19 @@ class SpriteFile:
         cell = bytearray(w * h)
         for y in range(fh):
             dest = u + y
+            if dest < 0:
+                continue
             if dest >= h:
                 break
             row = src[start + y * fw:start + (y + 1) * fw]
-            # A few sprites (circle25) declare a box wider than the cell;
-            # the game clips it rather than wrapping into the next row.
-            visible = min(fw, w - l)
-            cell[dest * w + l:dest * w + l + visible] = row[:visible]
+            # A few sprites (circle25) declare a box wider than the cell, and
+            # a few start left of it; the game clips rather than wrapping into
+            # the neighbouring row.
+            skip = max(0, -l)
+            x = l + skip
+            visible = min(fw - skip, w - x)
+            if visible > 0:
+                cell[dest * w + x:dest * w + x + visible] = row[skip:skip + visible]
         return bytes(cell)
 
     def render_sheet(self) -> Optional[bytes]:
@@ -782,14 +818,25 @@ class ImageFile:
         i += 4
         if not (0 < self.width <= 4096 and 0 < self.height <= 4096):
             return False
-        i += -i % 4                     # image data starts 4-byte aligned
         need = self.width * self.height
         if self.flags & self.COMPRESSED_FLAG:
+            # Image data starts on a 4-byte boundary -- but only in this,
+            # the plain form. The Worms 2 / Online Worms form that carries a
+            # description string is never padded (1101 such images across the
+            # shipped archives, none of them compressed).
+            if not self.description:
+                i += -i % 4
             try:
                 self.pixels = Team17Decompressor.decompress(d[i:], need)
             except DecompressionError:
                 return False
         else:
+            # Stored raw, so the declared file length gives the padding
+            # outright. Preferred over assuming the alignment: a handful of
+            # third-party images are written without it.
+            pad = len(d) - i - need
+            if 0 <= pad <= 3:
+                i += pad
             raw = d[i:i + need]
             if len(raw) < need:
                 return False
@@ -806,6 +853,129 @@ class ImageFile:
         for k in range(min(self.ncolours, 255)):
             out[(k + 1) * 3:(k + 1) * 3 + 3] = self.palette[k * 3:k * 3 + 3]
         return bytes(out)
+
+
+class BankFile:
+    """A Team17 sprite bank (.bnk) -- many animations sharing one palette.
+
+    Worms World Party Aqua keeps its worm animations here rather than in
+    loose .spr files: `mainspr.bnk` alone holds 1136 of them.
+
+        0   "BNK\\x1A"
+        4   u32  file length
+        8   u16  palette entry count, excluding the background colour
+            palette, 3 bytes per entry
+            pad to a 4-byte position
+            u32  sprite count,  Sprite[] 12 bytes each
+            u32  frame count,   Frame[]  12 bytes each
+            u32  stream count,  Stream[] 12 bytes each
+            stream data
+
+    Sprites index a shared frame table, and frames index a shared stream
+    table, so one stream commonly backs a whole animation.
+
+    Two details differ from the published description. The palette is stored
+    RGB, not BGR: matched against a known Worms Armageddon worm palette, the
+    stored order scores a mean colour distance of 9.0 against 15.9 for the
+    swap, and swapping turns worm flesh grey-blue. The Frame struct also
+    leads with the stream number, where .spr leads with the data position.
+    """
+
+    SIGNATURE = b'BNK\x1A'
+
+    def __init__(self, data: bytes):
+        self.data = data
+        self.palette: bytes = b''
+        self.sprites: List[Tuple[int, int, int, int, int, int, int]] = []
+        self.frames: List[Tuple[int, int, int, int, int, int]] = []
+        self.streams: List[Tuple[int, int, int]] = []
+        self.data_start = 0
+        self._blobs: Dict[int, bytes] = {}
+
+    def parse(self) -> bool:
+        d = self.data
+        if len(d) < 12 or d[0:4] != self.SIGNATURE:
+            return False
+        try:
+            ncol = struct.unpack('<H', d[8:10])[0]
+            i = 10 + ncol * 3
+            self.palette = d[10:i]
+            i += -i % 4
+            nspr = struct.unpack('<I', d[i:i + 4])[0]
+            i += 4
+            self.sprites = [struct.unpack('<HHHHHBB', d[i + k * 12:i + k * 12 + 12])
+                            for k in range(nspr)]
+            i += nspr * 12
+            nfrm = struct.unpack('<I', d[i:i + 4])[0]
+            i += 4
+            # Offsets are signed; a frame may hang off its cell, as in .spr.
+            self.frames = [struct.unpack('<HHhhhh', d[i + k * 12:i + k * 12 + 12])
+                           for k in range(nfrm)]
+            i += nfrm * 12
+            nstr = struct.unpack('<I', d[i:i + 4])[0]
+            i += 4
+            self.streams = [struct.unpack('<III', d[i + k * 12:i + k * 12 + 12])
+                            for k in range(nstr)]
+            i += nstr * 12
+        except (struct.error, IndexError):
+            return False
+        self.data_start = i
+        if i > len(d) or not self.sprites:
+            return False
+        # Every sprite's frame range must land inside the shared frame table.
+        return all(0 <= fs and fs + fc <= nfrm for _f, _w, _h, fs, fc, _u, _r
+                   in self.sprites)
+
+    @property
+    def ncolours(self) -> int:
+        return len(self.palette) // 3
+
+    def rgb_palette(self) -> bytes:
+        """256-entry RGB table; colour 0 is the unstored transparent black."""
+        out = bytearray(768)
+        for k in range(min(self.ncolours, 255)):
+            out[(k + 1) * 3:(k + 1) * 3 + 3] = self.palette[k * 3:k * 3 + 3]
+        return bytes(out)
+
+    def _stream(self, index: int) -> bytes:
+        if index not in self._blobs:
+            pos, dlen, _unused = self.streams[index]
+            self._blobs[index] = Team17Decompressor.decompress(
+                self.data[self.data_start + pos:], dlen)
+        return self._blobs[index]
+
+    def render_sheet(self, index: int) -> Optional[bytes]:
+        """Sprite `index` as its frames stacked vertically, frame 0 on top."""
+        _flags, w, h, start, count, _unk, _rate = self.sprites[index]
+        if not (0 < w <= MAX_DIM and 0 < h <= MAX_DIM and count):
+            return None
+        rows = bytearray()
+        for j in range(start, start + count):
+            sel, dpos, left, up, right, down = self.frames[j]
+            if sel >= len(self.streams):
+                return None
+            try:
+                src = self._stream(sel)
+            except DecompressionError:
+                return None
+            fw, fh = right - left, down - up
+            if fw < 0 or fh < 0 or dpos + fw * fh > len(src):
+                return None
+            cell = bytearray(w * h)
+            for y in range(fh):
+                dest = up + y
+                if dest < 0:
+                    continue
+                if dest >= h:
+                    break
+                row = src[dpos + y * fw:dpos + (y + 1) * fw]
+                skip = max(0, -left)
+                x = left + skip
+                visible = min(fw - skip, w - x)
+                if visible > 0:
+                    cell[dest * w + x:dest * w + x + visible] = row[skip:skip + visible]
+            rows += cell
+        return bytes(rows)
 
 
 class DirectoryReader:
@@ -1413,15 +1583,88 @@ def main():
             os.makedirs(gif_output_dir, exist_ok=True)
         count = 0
         gif_count = 0
+        img_count = 0
         failed = []
+        img_failed = []
 
         try:
             with open(dir_file, 'rb') as f:
                 for filename in sorted(reader.files.keys()):
-                    if not filename.endswith('.spr'):
-                        continue
                     data = reader.extract_file(f, filename)
-                    if not data:
+                    if not data or len(data) < 4:
+                        continue
+                    # Go by the signature rather than the extension: a couple
+                    # of level archives ship an image under a .inf name.
+                    kind = data[0:4]
+                    if kind == BankFile.SIGNATURE:
+                        bank = BankFile(data)
+                        if not bank.parse():
+                            failed.append(filename)
+                            continue
+                        # A bank holds hundreds of unnamed animations, so give
+                        # them a folder of their own and number them.
+                        stem = os.path.splitext(os.path.basename(filename))[0]
+                        bank_dir = os.path.join(sprite_output_dir, stem)
+                        os.makedirs(bank_dir, exist_ok=True)
+                        if want_gif:
+                            os.makedirs(os.path.join(gif_output_dir, stem),
+                                        exist_ok=True)
+                        palette = bank.rgb_palette()
+                        made = 0
+                        for k in range(len(bank.sprites)):
+                            sheet = bank.render_sheet(k)
+                            if sheet is None:
+                                failed.append(f'{filename}#{k}')
+                                continue
+                            flags, w, h, _s, fc, _u, rate = bank.sprites[k]
+                            stub = os.path.join(bank_dir, f'{k:04d}')
+                            with open(stub + '.spr', 'wb') as out:
+                                out.write(sheet)
+                            with open(stub + '.spr.spd', 'w') as out:
+                                out.write(f"frames = {fc}\nheight = {h}\n"
+                                          f"width = {w}\nframerate = {rate}\n"
+                                          f"flags = {flags}\n")
+                            bmp = SpriteFile._create_bmp(sheet, palette, w, h * fc)
+                            if bmp:
+                                with open(stub + '.spr.bmp', 'wb') as out:
+                                    out.write(bmp)
+                            if want_gif:
+                                gif = SpriteFile._create_gif(sheet, palette, w, h,
+                                                             fc, rate, flags)
+                                if gif:
+                                    gp = os.path.join(gif_output_dir, stem,
+                                                      f'{k:04d}.gif')
+                                    with open(gp, 'wb') as out:
+                                        out.write(gif)
+                                    gif_count += 1
+                            made += 1
+                        print(f"Decompressed bank: {filename} "
+                              f"({made} sprites, {bank.ncolours} colours)")
+                        count += made
+                        continue
+                    if kind == ImageFile.SIGNATURE:
+                        image = ImageFile(data)
+                        if not image.parse():
+                            img_failed.append(filename)
+                            continue
+                        # Named the way spriteEditor names its exports, so the
+                        # output folder can be fed straight back to `pack`.
+                        bmp = SpriteFile._create_bmp(image.pixels,
+                                                     image.rgb_palette(),
+                                                     image.width, image.height)
+                        if bmp is None:
+                            img_failed.append(filename)
+                            continue
+                        out_path = os.path.join(sprite_output_dir, filename + '.bmp')
+                        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                        with open(out_path, 'wb') as out:
+                            out.write(bmp)
+                        print(f"Decoded image: {filename} "
+                              f"({image.width}x{image.height}, "
+                              f"{image.ncolours} colours)")
+                        img_count += 1
+                        continue
+                    if kind != SpriteFile.SIGNATURE:
                         continue
 
                     sprite = SpriteFile(data)
@@ -1475,12 +1718,18 @@ def main():
             return 1
 
         print(f"\nDecompressed {count} sprites to {sprite_output_dir}")
+        if img_count:
+            print(f"Decoded {img_count} images to {sprite_output_dir}")
         if want_gif:
             print(f"Generated {gif_count} animated GIFs in {gif_output_dir}")
         if failed:
             print(f"Could not decode {len(failed)} sprites "
                   f"(unsupported SPR layout variant): {', '.join(failed[:5])}"
                   + (' ...' if len(failed) > 5 else ''))
+        if img_failed:
+            print(f"Could not decode {len(img_failed)} images: "
+                  f"{', '.join(img_failed[:5])}"
+                  + (' ...' if len(img_failed) > 5 else ''))
         return 0
 
     elif command == "pack":

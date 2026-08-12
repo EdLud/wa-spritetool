@@ -60,7 +60,7 @@ copied through unchanged.
 | `--no-recreate` | reuse an existing `.spr`/`.img` instead of rebuilding from BMP |
 | `--opaque-img` | treat images as having no transparent colour |
 
-### Decode sprites
+### Decode sprites and images
 
 ```bash
 python3 wa_spritetool.py decompress Gfx.dir output/
@@ -74,6 +74,14 @@ For each sprite this writes three files:
 | `.spr` | decoded pixels, all frames stacked vertically |
 | `.bmp` | the same sheet as an 8-bit indexed bitmap |
 | `.spd` | frame count, dimensions, frame rate, playback flags |
+
+Each image becomes a single `<name>.img.bmp`. Both use the names `pack`
+expects, so a decoded archive can be edited and built straight back into a
+`.dir`.
+
+A sprite bank (`.bnk`) holds many unnamed animations sharing one palette, so
+its sprites go in a folder named after the bank and are numbered in order:
+`mainspr/0000.spr`, `mainspr/0001.spr`, and so on.
 
 `--gif` additionally writes one animated GIF per sprite. It is off by default
 because GIF encoding takes far longer than everything else combined: decoding
@@ -102,6 +110,11 @@ output/
 | `.dir` graphics directory | yes | yes |
 | `.spr` sprite | yes | compressed only |
 | `.img` image | yes | yes |
+| `.bnk` sprite bank | yes | no |
+
+Archives from Worms Armageddon, Worms World Party Aqua and Online Worms are
+all read; the older Online Worms files name their sprites and images inside
+the file, which is handled automatically.
 
 Uncompressed sprites can be read but not written; every sprite the game ships
 inside a `.dir` is compressed, so `pack` produces compressed output.
