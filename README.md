@@ -164,6 +164,7 @@ since the shipped terrains do break it.
 | `--no-output-inf` | do not write object settings back into the folder |
 | `--write-palette` | draw the terrain's colours to `palette.png` |
 | `--read-palette` | fit every picture to the colours in `palette.png` |
+| `--no-palette` | cut no shared palette; each picture keeps its own |
 
 `--write-palette` puts a `palette.png` in the source folder, the terrain's
 colours as a grid of swatches, and says how many of the 112 are spent. It is
@@ -171,6 +172,18 @@ read back out of the finished archive rather than from the plan that made it,
 so a terrain of already-indexed art -- which needs no plan -- draws one too.
 Squares past the last colour are left transparent, so what is counted and what
 is drawn agree.
+
+`--no-palette` skips the shared cut entirely. Each picture keeps the colours
+it was authored with, and an indexed source is packed exactly as it stands --
+for an author who has already fitted their art to a palette they chose and
+does not want it nudged to make room for the rest of the terrain.
+
+The 112 then becomes theirs to stay inside. Nothing enforces it here, but the
+count after packing says what the total came to: Entomology's PNGs cut to 112
+together, and 4256 apart. A PNG drawing more colours than an `.img` can hold
+is still reduced, since that is the format's limit rather than a choice this
+flag can waive; the difference is that the reduction looks at one picture
+instead of all of them.
 
 `--read-palette` takes that file back and fits every picture to it, instead of
 cutting a palette from the art. Edit the swatches, or hand over a palette of

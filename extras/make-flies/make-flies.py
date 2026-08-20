@@ -24,8 +24,10 @@ Flies wrap at the frame edges rather than bouncing -- a fly leaving the right
 edge reappears at the left. Bouncing reads as an insect in a box; wrapping
 reads as a swarm that extends past the frame.
 
-One fly in the swarm is a firefly: it glows amber over the first half of the
-strip and is an ordinary dark fly for the second half. See FIREFLY_* below.
+Some of the swarm are fireflies: they glow amber over a stretch of the strip
+and are ordinary dark flies the rest of the time. Each one is a `Firefly` in
+the FIREFLIES list at the bottom of this file, with its own size, halo and
+flash schedule -- edit that list, including down to empty for no glow at all.
 """
 import math
 import os
@@ -49,10 +51,10 @@ SIZE_RANGE = (2.0, 4.0)     # px, per fly
 COLOR_DARK = (48, 32, 20)
 COLOR_LIGHT = (110, 78, 46)
 
-# --- the firefly ----------------------------------------------------------
-# One fly of the swarm lights up. It is lit for the FIRST HALF of the strip and
-# is an ordinary dark fly for the rest, so over a loop it reads as an insect
-# that flashes rather than a lamp that is always on.
+# --- the fireflies --------------------------------------------------------
+# Some of the swarm light up. Each one is a `Firefly` in the FIREFLIES list at
+# the bottom of this file -- that list is the thing to edit, and an empty list
+# is a perfectly good answer if you want a plain swarm.
 #
 # Amber, not the obvious lemon yellow, and that is a palette decision rather
 # than a taste one. W:A has no alpha: a halo can only exist as opaque colours
@@ -61,27 +63,87 @@ COLOR_LIGHT = (110, 78, 46)
 # to the background. Measured against Entomology's build/palette.png over
 # #101021 (see ramp_error in make_anim_test.py):
 #
-#   (246,170,86) amber   mean err  9.6 over 13 distinct entries  <- this
+#   (246,170,86) amber   mean err  9.6 over 13 distinct entries  <- default
 #   (248,215,103) yellow mean err 13.6 over 11, but detours through olive-grey
 #                        in the midtones, so the halo goes muddy partway out
 #   (242,205,45) gold    mean err 21.8 -- the palette has no saturated yellow
 #                        below its brightest, so it bands hard into brown
-FIREFLY_COLOR = (246, 170, 86)      # the lit body itself
-FIREFLY_GLOW_COLOR = (246, 170, 86) # the halo next to it
-FIREFLY_LIT_FRAMES = 80             # frames lit, counted from frame 0
+#
+# Per-firefly colour is allowed, but anything far off this amber has to be
+# checked against the palette the same way or the halo will band.
+FIREFLY_COLOR = (246, 170, 86)      # default lit body and halo
 
-FIREFLY_GLOW = 4.0          # halo radius as a multiple of the fly's own radius
-FIREFLY_GLOW_GAMMA = 1.7    # falloff shape; >1 keeps the halo tight to the core
-FIREFLY_SIZE = 2.0          # px. Fixed rather than random -- a firefly that
-                            # rolled 2px would be too small to carry a halo.
 
-# The glow does not simply switch off at FIREFLY_LIT_FRAMES. It ramps up over
-# the first few frames and back down over the last few, so the light arrives
-# and leaves rather than popping, and it breathes on a slow cycle underneath.
-FIREFLY_RAMP = 12           # frames of fade-in at the start and fade-out at the
-                            # end of the lit stretch
-FIREFLY_PULSE_PERIOD = 26   # frames per breath
-FIREFLY_PULSE_DEPTH = 0.35  # how far the breath dips, 0 = steady, 1 = to black
+@dataclass
+class Firefly:
+    """One glowing fly's look and flash schedule.
+
+    Everything here is per firefly, so two of them can differ in size, halo
+    reach, falloff shape and when they are lit. Only the flash timing has to
+    be thought about as a group: fireflies all lit over the same frames read
+    as one blinking cluster, which is why `lit_from` exists.
+
+    size        px across the lit body. Below ~2px there is not enough core to
+                anchor a halo and it reads as a smudge rather than an insect.
+    glow        halo radius as a multiple of the body's own radius. 0 or 1 is
+                no halo at all -- a hard lit dot.
+    glow_gamma  falloff shape. 1 = linear, >1 keeps the halo tight around the
+                core, <1 spreads it out flat and wide.
+    lit_frames  how many frames it stays lit. None = half the strip.
+    lit_from    first lit frame. Staggering this across fireflies is what stops
+                them flashing in unison.
+    color       RGB of the lit body; None = FIREFLY_COLOR.
+    glow_color  RGB of the halo; None = whatever `color` resolved to.
+    ramp        frames of fade-in at the start and fade-out at the end of the
+                lit stretch, so the light arrives and leaves rather than
+                popping.
+    pulse_period / pulse_depth
+                the slow breath underneath. Depth 0 = a steady glow, 1 = one
+                that dips to nothing. Varying the period per firefly matters
+                more than it looks: identical periods make two fireflies pulse
+                in lockstep even when their lit stretches differ.
+    """
+    size: float = 2.0
+    glow: float = 4.0
+    glow_gamma: float = 1.7
+    lit_frames: Optional[int] = None
+    lit_from: int = 0
+    color: Optional[Tuple[int, int, int]] = None
+    glow_color: Optional[Tuple[int, int, int]] = None
+    ramp: int = 12
+    pulse_period: float = 26.0
+    pulse_depth: float = 0.35
+
+    def level(self, i, frames):
+        """How lit this firefly is on frame `i`, 0..1.
+
+        Three things multiplied together: the lit/unlit gate, the ramp at each
+        end of the lit stretch, and the slow breath underneath. Keeping them
+        separate is what lets the light arrive smoothly and still flicker --
+        one curve doing all three would have to trade one against the others.
+        """
+        lit = frames // 2 if self.lit_frames is None else self.lit_frames
+        t = i - self.lit_from
+        if t < 0 or t >= lit:
+            return 0.0
+        # Ends of the lit stretch. min() rather than a branch so a lit stretch
+        # shorter than two ramps still opens and closes instead of clipping.
+        ramp = float(self.ramp) or 1.0
+        env = max(0.0, min(1.0, (t + 1) / ramp, (lit - t) / ramp))
+        if not self.pulse_period:
+            return env
+        # The breath. Offset so it sits between 1 - depth and 1: the firefly
+        # dims and recovers, it never goes fully out mid-stretch, because a
+        # true zero would read as the glow having ended early.
+        breath = 1.0 - self.pulse_depth * 0.5 * (
+            1.0 - math.cos(2 * math.pi * t / self.pulse_period))
+        return env * breath
+
+    def body(self):
+        return self.color or FIREFLY_COLOR
+
+    def halo(self):
+        return self.glow_color or self.body()
 
 # --- motion ---------------------------------------------------------------
 SPEED_RANGE = (2.2, 5.5)    # px per frame while dashing
@@ -119,34 +181,14 @@ SS = 8                      # supersample factor, as in the other strips
 @dataclass
 class Fly:
     size: float
-    color: Tuple[int, int, int]
-    xs: np.ndarray          # position per frame, already wrapped
+    color: Tuple[int, int, int]     # its brown, worn whenever it is not lit
+    xs: np.ndarray                  # position per frame, already wrapped
     ys: np.ndarray
-    firefly: bool = False
-    lit_frames: int = FIREFLY_LIT_FRAMES
-    dark_color: Optional[Tuple[int, int, int]] = None   # its unlit brown
+    spec: Optional[Firefly] = None  # None = an ordinary fly, never lit
 
-    def glow_level(self, i):
-        """How lit the firefly is on frame `i`, 0..1. 0 for an ordinary fly.
-
-        Three things multiplied together: the lit/unlit gate, the ramp at each
-        end of the lit stretch, and the slow breath underneath. Keeping them
-        separate is what lets the light arrive smoothly and still flicker --
-        one curve doing all three would have to trade one against the others.
-        """
-        if not self.firefly or i >= self.lit_frames:
-            return 0.0
-        # Ends of the lit stretch. min() rather than a branch so a lit stretch
-        # shorter than two ramps still opens and closes instead of clipping.
-        ramp = float(FIREFLY_RAMP) or 1.0
-        env = min(1.0, (i + 1) / ramp, (self.lit_frames - i) / ramp)
-        env = max(0.0, env)
-        # The breath. Offset so it sits between 1 - depth and 1: the firefly
-        # dims and recovers, it never goes fully out mid-stretch, because a
-        # true zero would read as the glow having ended early.
-        breath = 1.0 - FIREFLY_PULSE_DEPTH * 0.5 * (
-            1.0 - math.cos(2 * math.pi * i / FIREFLY_PULSE_PERIOD))
-        return env * breath
+    def level(self, i, frames):
+        """How lit this fly is on frame `i`, 0..1. Always 0 for a plain fly."""
+        return 0.0 if self.spec is None else self.spec.level(i, frames)
 
 
 def _wrap_path(steps, frames):
@@ -203,8 +245,13 @@ def _reflect_path(steps, x, y, w, h, margin=EDGE_MARGIN):
 
 
 def make_fly(rnd, frames=FRAMES, w=FRAME_W, h=FRAME_H,
-             turn_around_edge=TURN_AROUND_EDGE, firefly=False):
-    """One fly: a full path plus its look."""
+             turn_around_edge=TURN_AROUND_EDGE, spec=None):
+    """One fly: a full path plus its look.
+
+    `spec` is a Firefly to make this one glow, or None for an ordinary fly.
+    Either way the same random draws happen in the same order, so lighting a
+    fly up does not reshuffle the swarm around it.
+    """
     steps = []
     heading = rnd.uniform(0, 2 * math.pi)
     while len(steps) < frames:
@@ -241,38 +288,43 @@ def make_fly(rnd, frames=FRAMES, w=FRAME_W, h=FRAME_H,
         pos[:, 1] += rnd.uniform(0, h)
 
     t = rnd.random()
+    # Every fly keeps a brown, fireflies included: it is what they wear over
+    # the stretch they spend unlit, so when the light goes out one becomes an
+    # ordinary member of the swarm rather than a dimmed amber dot.
     color = tuple(int(round(a + (b - a) * t))
                   for a, b in zip(COLOR_DARK, COLOR_LIGHT))
-    # The firefly keeps a brown of its own for the half of the strip it spends
-    # unlit, so when the light goes out it becomes one of the swarm rather than
-    # a dimmed amber dot.
-    return Fly(size=FIREFLY_SIZE if firefly else rnd.uniform(*SIZE_RANGE),
-               color=color, xs=pos[:, 0], ys=pos[:, 1],
-               firefly=firefly, dark_color=color)
+    # Drawn unconditionally and only then overridden, so a firefly consumes the
+    # same numbers an ordinary fly would and the rest of the swarm is unmoved.
+    size = rnd.uniform(*SIZE_RANGE)
+    return Fly(size=size if spec is None else spec.size, color=color,
+               xs=pos[:, 0], ys=pos[:, 1], spec=spec)
 
 
 def render_frame(flies, i, w=FRAME_W, h=FRAME_H,
-                 turn_around_edge=TURN_AROUND_EDGE):
+                 turn_around_edge=TURN_AROUND_EDGE, frames=FRAMES):
     """One transparent frame with every fly drawn at its frame-`i` position."""
     big = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
     # "RGBA" mode makes ellipse() alpha-composite onto what is already there
-    # instead of replacing the pixel, which the firefly's halo depends on: it
-    # is a stack of semi-transparent discs, and a replacing draw would leave
-    # only the last one.
+    # instead of replacing the pixel, which a firefly's halo depends on: it is
+    # a stack of semi-transparent discs, and a replacing draw would leave only
+    # the last one. It is also what lets two overlapping halos add up.
     d = ImageDraw.Draw(big, "RGBA")
     # A bounced path is already inside the frame, so it needs neither the
     # modulo nor the straddling copies -- only a wrapping fly can be cut by an
     # edge and have to appear on the far side at the same time.
     offsets = ((0,),) * 2 if turn_around_edge else ((-w, 0, w), (-h, 0, h))
-    # Flies first, firefly last, so its halo lays over the swarm rather than
-    # having plain brown dots punched through it.
-    for f in sorted(flies, key=lambda f: f.firefly):
+    # Dim flies first, brightest last, so a halo lays over the swarm rather
+    # than having plain brown dots punched through it. Sorting by how lit each
+    # fly is on THIS frame rather than by whether it is a firefly at all keeps
+    # that true as fireflies come on and go out at different times.
+    for f in sorted(flies, key=lambda f: f.level(i, frames)):
         r = f.size / 2.0
-        lit = f.glow_level(i)
+        lit = f.level(i, frames)
+        spec = f.spec
         color = f.color if lit <= 0 else tuple(
             int(round(a + (b - a) * lit))
-            for a, b in zip(f.dark_color or f.color, FIREFLY_COLOR))
-        outer = r * FIREFLY_GLOW if lit > 0 else r
+            for a, b in zip(f.color, spec.body()))
+        outer = r * spec.glow if lit > 0 and spec.glow > 1.0 else r
         x = f.xs[i] % w if not turn_around_edge else f.xs[i]
         y = f.ys[i] % h if not turn_around_edge else f.ys[i]
         for ox in offsets[0]:
@@ -286,15 +338,15 @@ def render_frame(flies, i, w=FRAME_W, h=FRAME_H,
                     # supersampled pixel of halo width. Drawing outermost-first
                     # and letting each disc paint over the last is what makes a
                     # gradient rather than a stack of visible bands.
+                    halo = spec.halo()
                     steps = max(16, int((outer - r) * SS))
                     for s in range(steps):
                         t = 1.0 - s / float(steps)   # 1 outside -> 0 at core
                         rr = r + (outer - r) * t
-                        a = (1.0 - t) ** FIREFLY_GLOW_GAMMA * lit
+                        a = (1.0 - t) ** spec.glow_gamma * lit
                         d.ellipse([(cx - rr) * SS, (cy - rr) * SS,
                                    (cx + rr) * SS, (cy + rr) * SS],
-                                  fill=FIREFLY_GLOW_COLOR
-                                  + (int(round(a * 255)),))
+                                  fill=halo + (int(round(a * 255)),))
                 d.ellipse([(cx - r) * SS, (cy - r) * SS,
                            (cx + r) * SS, (cy + r) * SS],
                           fill=color + (255,))
@@ -304,22 +356,28 @@ def render_frame(flies, i, w=FRAME_W, h=FRAME_H,
 
 
 def build(n=N_FLIES, frames=FRAMES, w=FRAME_W, h=FRAME_H, seed=5,
-          turn_around_edge=TURN_AROUND_EDGE, fireflies=1,
-          lit_frames=FIREFLY_LIT_FRAMES):
-    """The swarm. The first `fireflies` of them glow for `lit_frames` frames.
+          turn_around_edge=TURN_AROUND_EDGE, fireflies=None):
+    """The swarm. `fireflies` is a list of Firefly specs, or None for FIREFLIES.
 
-    Which fly is the firefly is decided by index rather than at random, so the
-    same seed gives the same swarm whether or not anything is lit -- the flies
-    are built in the same order and draw the same numbers either way.
+    The first len(fireflies) flies take those specs, one each, and the rest are
+    ordinary. Assigning by index rather than at random is what makes the list
+    predictable to edit: the second entry is always the second firefly, and
+    changing it does not disturb the first.
+
+    A list longer than `n` is an error rather than a silent truncation -- a
+    firefly you wrote down and cannot see is worth being told about.
     """
+    specs = FIREFLIES if fireflies is None else fireflies
+    if len(specs) > n:
+        raise ValueError(f"{len(specs)} fireflies but only {n} flies")
     rnd = np.random.default_rng(seed)
     flies = [make_fly(rnd, frames, w, h, turn_around_edge,
-                      firefly=(k < fireflies)) for k in range(n)]
-    for f in flies:
-        f.lit_frames = min(lit_frames, frames)
+                      spec=specs[k] if k < len(specs) else None)
+             for k in range(n)]
     sheet = Image.new("RGBA", (w, h * frames), (0, 0, 0, 0))
     for i in range(frames):
-        sheet.paste(render_frame(flies, i, w, h, turn_around_edge), (0, i * h))
+        sheet.paste(render_frame(flies, i, w, h, turn_around_edge, frames),
+                    (0, i * h))
     return sheet
 
 
@@ -342,6 +400,26 @@ def save_gif(sheet, path, frames=FRAMES, h=FRAME_H, duration=33,
                  duration=duration, loop=0, disposal=2)
 
 
+# --- the arrangement ------------------------------------------------------
+# Edit this list to change which flies glow and how. Every field is optional;
+# Firefly() alone is a 2px fly with a 4x amber halo, lit for the first half of
+# the strip. An empty list is a plain swarm with nothing lit.
+#
+# The first entries of the swarm take these specs, one each, so three entries
+# means three glowing flies out of N_FLIES. The rest stay ordinary.
+#
+# Worth staggering `lit_from` and varying `pulse_period`: fireflies sharing
+# both flash in unison, which reads as a string of lights rather than as
+# insects that happen to be near each other.
+FIREFLIES = [
+    Firefly(size=1.0, glow=4.0, glow_gamma=1.7, lit_frames=80, lit_from=0),
+    Firefly(size=0.6, glow=5.0, glow_gamma=1.4, lit_frames=60, lit_from=34,
+            pulse_period=31.0, pulse_depth=0.45),
+    Firefly(size=1.8, glow=3.2, glow_gamma=2.0, lit_frames=50, lit_from=96,
+            pulse_period=19.0, pulse_depth=0.25),
+]
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -358,11 +436,10 @@ if __name__ == "__main__":
     ap.add_argument("--turn-around-edge", action="store_true",
                     default=TURN_AROUND_EDGE,
                     help="bounce off the frame edges instead of wrapping")
-    ap.add_argument("--fireflies", type=int, default=1,
-                    help="how many of the flies glow (default 1)")
-    ap.add_argument("--lit-frames", type=int, default=FIREFLY_LIT_FRAMES,
-                    help="frames a firefly stays lit, from frame 0 "
-                         f"(default {FIREFLY_LIT_FRAMES})")
+    ap.add_argument("--fireflies", type=int, metavar="N",
+                    help="use only the first N entries of FIREFLIES, for "
+                         "trying fewer without editing the list. 0 = none. "
+                         f"Omit for all {len(FIREFLIES)} of them.")
     ap.add_argument("--dark-bed", action="store_true",
                     help="render the preview GIF over the #101021 backdrop "
                          "the sprite really sits on, so the glow reads")
@@ -376,19 +453,26 @@ if __name__ == "__main__":
     if os.path.dirname(out):
         os.makedirs(os.path.dirname(out), exist_ok=True)
 
+    specs = (FIREFLIES if args.fireflies is None
+             else FIREFLIES[:max(0, args.fireflies)])
+
     sheet = build(n=args.flies, frames=args.frames,
                   w=args.width, h=args.height, seed=args.seed,
-                  turn_around_edge=args.turn_around_edge,
-                  fireflies=args.fireflies, lit_frames=args.lit_frames)
+                  turn_around_edge=args.turn_around_edge, fireflies=specs)
     sheet.save(out)
     print(f"wrote {out} ({sheet.width}x{sheet.height}, "
           f"{args.frames} frames of {args.width}x{args.height})")
     print(f"  {args.flies} flies, {SIZE_RANGE[0]}-{SIZE_RANGE[1]}px")
-    if args.fireflies:
-        lit = min(args.lit_frames, args.frames)
-        print(f"  {args.fireflies} firefly, "
-              f"#{'%02x%02x%02x' % FIREFLY_COLOR} lit frames 0-{lit - 1} "
-              f"of {args.frames}, glow {FIREFLY_GLOW}x radius")
+    if not specs:
+        print("  no fireflies")
+    for k, s in enumerate(specs):
+        lit = args.frames // 2 if s.lit_frames is None else s.lit_frames
+        last = min(s.lit_from + lit, args.frames) - 1
+        note = "" if last >= s.lit_from else "  <- never lit, past the end"
+        print(f"  firefly {k}: {s.size}px #{'%02x%02x%02x' % s.body()} "
+              f"glow {s.glow}x gamma {s.glow_gamma}, "
+              f"lit frames {s.lit_from}-{last} of {args.frames}, "
+              f"pulse {s.pulse_period}f x{s.pulse_depth}{note}")
 
     if args.spd:
         spd = os.path.splitext(out)[0] + ".spd"

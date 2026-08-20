@@ -3291,6 +3291,8 @@ def print_help():
     print("                                                       object's settings back")
     print("                                    --write-palette    draw the terrain's")
     print("                                                       colours to palette.png")
+    print("                                    --no-palette       leave colours as")
+    print("                                                       authored")
     print("                                    --read-palette     fit the art to the")
     print("                                                       colours in palette.png")
     print("  decompress <dir_file> [output_dir] [--gif]")
@@ -3644,7 +3646,7 @@ def main():
         known = {'--no-compress-spr', '--no-compress-img',
                  '--no-recreate', '--opaque-img', '--force',
                  '--defaults', '--no-defaults', '--no-output-inf',
-                 '--write-palette', '--read-palette'}
+                 '--write-palette', '--read-palette', '--no-palette'}
         unknown = [o for o in opts if o not in known]
         if unknown:
             print(f"Error: unknown option(s): {', '.join(unknown)}")
@@ -3661,6 +3663,12 @@ def main():
         output_inf = '--no-output-inf' not in opts
         write_palette = '--write-palette' in opts
         read_palette = '--read-palette' in opts
+        no_palette = '--no-palette' in opts
+        if no_palette and read_palette:
+            print("Error: --no-palette and --read-palette ask for opposite "
+                  "things. One leaves the colours alone; the other fits every "
+                  "picture to a palette you supply.")
+            return 1
         # None means ask; the flags answer ahead of time, for a script.
         assume_defaults: Optional[bool] = None
         if '--defaults' in opts:
@@ -3827,7 +3835,20 @@ def main():
         # holds art the game reaches by other routes and the guide's 112 says
         # nothing about them.
         shared_palette = None
-        if terrain and read_palette:
+        if terrain and no_palette:
+            # No terrain-wide cut. An indexed source is then packed exactly as
+            # authored -- which is the point: an author who has already fitted
+            # their art to a palette they chose gets it back untouched, rather
+            # than nudged to make room for the rest of the terrain.
+            #
+            # A PNG is still reduced if it draws more than an .img can hold,
+            # because that is the format's limit and not ours to waive; the
+            # difference is that the reduction now looks at one picture rather
+            # than at all of them together. Whether the total lands inside the
+            # guide's 112 becomes the author's business, and the count printed
+            # after packing says whether it did.
+            print("  --no-palette: each picture keeps its own colours")
+        elif terrain and read_palette:
             # An author's own palette, taken as given rather than cut from the
             # art: every picture is fitted to it, whatever that costs them.
             given = os.path.join(source_dir, PALETTE_NAME)
