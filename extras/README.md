@@ -6,12 +6,11 @@ None of this is needed to pack a terrain -- `spritetool.py` does that on its
 own. These are for making the art that goes in, and for looking at how it
 moves before the game sees it.
 
-Three files sit at the top and are imported by everything else:
+Two files sit at the top and are imported by everything else:
 
 | module | what it holds |
 |---|---|
 | `colors.py` | the fixed gfx0/gfx1 palettes, and operations on colour |
-| `spr.py` | reading and writing `.spr` sprites |
 | `gif.py` | previewing a sprite strip as an animation |
 
 `colors.py` is the one that matters. A sprite in a terrain's `gfx0` or `gfx1`
@@ -62,6 +61,6 @@ a strip reads at all).
 
 **Terrain pieces** — `build-grass`, `build-bridges`, `build-debris`.
 
-**Odds and ends** — `make-spr` (write a `.spr` directly), `repalette`,
-`convert-to-bmp`, `cutout-transform` (split a sheet into objects),
-`make-object-gifs`, `make-grids`.
+**Odds and ends** — `make-spr` (write a `.spr` directly), `convert-to-bmp`,
+`cutout-transform` (split a sheet into objects), `make-object-gifs`,
+`make-grids`.
