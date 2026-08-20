@@ -3,9 +3,7 @@
 Extracts and packs Worms Armageddon graphics archives (.dir) and decodes the sprites and images inside them to BMP and animated GIF.
 
 Alongside it, [extras/](extras/) holds tools to experiment with animations:
-grass that sways, bubbles that rise, insects that mill about. They share one
-file of colour tables with the packer, so a sprite made there and a terrain
-packed here cannot disagree about what a palette index means.
+grass that sways, bubbles that rise, insects that mill about.
 
 
 The `.spr` sprite format has no public specification; it was reverse engineered
