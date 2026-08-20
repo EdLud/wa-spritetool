@@ -11,11 +11,10 @@ for this tool and is documented in [SPR_FORMAT.md](SPR_FORMAT.md).
 
 ## Requirements
 
-Python 3.8 or newer. [Pillow](https://pypi.org/project/Pillow/) is optional and
-only affects GIF writing — without it a built-in encoder is used instead.
+Python 3.8 or newer, and [Pillow](https://pypi.org/project/Pillow/).
 
 ```bash
-pip install pillow      # optional
+pip install pillow
 ```
 
 ## Install
@@ -145,9 +144,6 @@ art. Under that rule the median across a stock install is exactly 112.
 A terrain already inside the budget converts losslessly. Where both a `.bmp`
 and a `.png` exist the `.bmp` wins, being already indexed and so authored
 exactly.
-
-Reading PNG needs [Pillow](https://pypi.org/project/Pillow/); without it the
-rest of the tool still works.
 
 Rules the terrain guide states outright are refused rather than written by
 `pack-terrain`: more than 32 objects crashes the game on the land generator

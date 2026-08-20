@@ -16,8 +16,8 @@ from typing import Optional, BinaryIO, Dict, Tuple, List, Sequence
 
 try:
     from PIL import Image
-except ImportError:  # optional; only affects GIF output
-    Image = None
+except ImportError:
+    sys.exit("this needs Pillow: pip install pillow")
 
 try:
     import numpy as np
@@ -1414,8 +1414,6 @@ def png_colour_counts(data: bytes,
                       alpha_threshold: int = PNG_ALPHA_THRESHOLD
                       ) -> Dict[Tuple[int, int, int], int]:
     """How often each drawn colour occurs in a PNG."""
-    if Image is None:
-        raise ValueError('reading PNG needs Pillow; pip install pillow')
     from io import BytesIO
     raw = Image.open(BytesIO(data)).convert('RGBA').tobytes()
     counts: Dict[Tuple[int, int, int], int] = {}
@@ -1431,8 +1429,6 @@ def cut_palette(counts: Dict[Tuple[int, int, int], int],
     """Reduce a set of weighted colours to at most `max_colours` by median cut."""
     if len(counts) <= max_colours:
         return sorted(counts)
-    if Image is None:
-        raise ValueError('reducing colours needs Pillow; pip install pillow')
     total = sum(counts.values())
     strip = Image.new('RGB', (total, 1))
     strip.putdata([c for c, n in counts.items() for _ in range(n)])
@@ -1505,8 +1501,6 @@ def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
     The drawn colours are reduced to `max_colours` if there are more, and the
     returned notes say how far that moved them.
     """
-    if Image is None:
-        raise ValueError('reading PNG needs Pillow; pip install pillow')
     from io import BytesIO
     src = Image.open(BytesIO(data)).convert('RGBA')
     width, height = src.size
@@ -2438,8 +2432,6 @@ def read_palette_sheet(path: str) -> Tuple[List[Tuple[int, int, int]], str]:
     palette they like can hand it over as it is. Transparent pixels are
     skipped, so the spare squares of a sheet's last row count for nothing.
     """
-    if Image is None:
-        return [], 'reading a palette needs Pillow; pip install pillow'
     if not os.path.exists(path):
         return [], f'no {path}'
     raw = Image.open(path).convert('RGBA').tobytes()
@@ -2474,8 +2466,6 @@ def _write_palette_sheet(entries: Dict[str, bytes], dest: str,
     The gfx0/gfx1 overrides are left out, as they are from the budget -- they
     replace what the game takes from Gfx.dir and are not the terrain's own.
     """
-    if Image is None:
-        return f'not writing {os.path.basename(dest)}: needs Pillow'
     seen: List[bytes] = []
     known: set = set()
     for name in sorted(entries):

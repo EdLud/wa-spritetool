@@ -31,3 +31,8 @@ __pycache__/
 !test/**/*.dir
 !test/**/decompressed/
 !test/**/decompressed/**
+
+# ...but not the Finder's droppings, which the un-ignore above would otherwise
+# pull back in after .DS_Store had already excluded them.
+.DS_Store
+**/.DS_Store
