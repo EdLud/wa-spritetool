@@ -371,13 +371,18 @@ Reserving a palette slot for transparency instead makes it a real colour at
 pixel index 1, which both wastes the slot and, at 16 + 1 entries, is the count
 that crashes.
 
-`pack` compresses sprites by default, but `pack-terrain` never compresses
-`back.spr` or `debris.spr`: the game reads those two by a route that runs its
-decompression loop off the end of the buffer, and it crashes the moment the
-background or debris is drawn. Each is uncompressed in 113 of the roughly 119
-stock terrains that have one, where `_back.spr` and `back2.spr` -- which the
-game reaches differently -- are mostly compressed. Nothing needs passing;
-`--no-compress-spr` still turns compression off for every sprite.
+Sprites are compressed, all of them. `back.spr` and `debris.spr` were held out
+for a while, because the stock terrains mostly store those two raw -- 115 of
+130 debris, 113 of 118 back. Mostly, not always: Coral Reef ships a compressed
+`debris.spr` at 400x400 by 160 frames and loads, and Distant Planet and
+Hildegard ship compressed backgrounds.
+
+Storing them raw was costly. Debris is nearly all transparent, so an
+uncompressed one is mostly padding: 18.1 MB where compression gives 275 KB of
+the same pixels. That single file put a terrain over the 10 MB that
+wkTerrainSync will transfer, so it could not be sent to another player at all.
+
+`--no-compress-spr` turns it off for every sprite if you want it.
 
 ## Extras
 

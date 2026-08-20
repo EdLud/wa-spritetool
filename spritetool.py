@@ -1744,6 +1744,11 @@ TEXTURE_DIM = 256
 # states outright and no shipped terrain breaks are refused; the rest are
 # reported and built anyway, because the shipped terrains do break them.
 MAX_OBJECTS = 32                # "Maximum of 32 objects"; 143 terrains obey it
+# What wkTerrainSync will hand to another player. Past this it refuses the
+# transfer outright -- "specified file size exceeds allowed limit" -- and the
+# terrain works at home but cannot be shared, which is usually not what an
+# author wants to find out from someone else.
+MAX_SYNC_BYTES = 10 * 1024 * 1024
 SOIL_DIM = (256, 256)           # MAX_SHARED_COLOURS is up with the PNG reader
 GRADIENT_DIM = (8, 916)
 GRASS_WIDTH = 136               # height varies
@@ -3275,13 +3280,20 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
         raise ValueError(f'{os.path.basename(spd_path)} says {frames} frames of '
                          f'{cell_w}x{cell_h}, which needs a {cell_w}x'
                          f'{cell_h * frames} sheet; the BMP is {width}x{height}')
-    # back.spr and debris.spr go in uncompressed whatever else does. The game
-    # reads those two by a route that runs its decompression loop off the end
-    # of the buffer when they are compressed, and it crashes the moment the
-    # background or debris is drawn. The stock terrains bear it out: each is
-    # uncompressed in 113 of ~119, where _back.spr and back2.spr -- which the
-    # game reaches differently -- are mostly compressed.
-    compress_this = compress_spr and lower not in ('back.spr', 'debris.spr')
+    # Every sprite is compressed, this one included. back.spr and debris.spr
+    # were held out for a while, on the strength of one crash and the fact
+    # that the stock terrains mostly store them raw -- 115 of 130 debris and
+    # 113 of 118 back. But mostly is not always, and the exceptions settle it:
+    # Coral Reef ships a COMPRESSED debris.spr at 400x400 by 160 frames, the
+    # same shape as one we were writing raw, and it loads. Distant Planet and
+    # Hildegard ship compressed back.spr files, and they load.
+    #
+    # Holding them out was expensive. Debris is nearly all transparent -- 0.17%
+    # ink in the terrain that prompted this -- so raw storage is almost pure
+    # padding: 18,100,648 bytes where compression gives 274,981, the same
+    # pixels either way. That one file put the archive over wkTerrainSync's
+    # 10 MB transfer limit and made the terrain unsendable.
+    compress_this = compress_spr
     blob = encode_sprite(cell_w, cell_h, frames, remapped, palette,
                          meta.get('flags', 1), meta.get('framerate', 0),
                          compress=compress_this)
@@ -4004,6 +4016,13 @@ def main():
         print(f"  encoded from source images: {built}")
         print(f"  copied unchanged:           {reused}")
         print(f"  archive size:               {len(archive):,} bytes")
+        if terrain and len(archive) > MAX_SYNC_BYTES:
+            biggest = max(packed.items(), key=lambda kv: len(kv[1]))
+            print(f"  note: past the {MAX_SYNC_BYTES:,} bytes wkTerrainSync "
+                  f"will send. It plays here, but another player's game "
+                  f"refuses the transfer.", file=sys.stderr)
+            print(f"  note: the largest entry is {biggest[0]} at "
+                  f"{len(biggest[1]):,} bytes", file=sys.stderr)
         return 0
 
     elif command == "land":
