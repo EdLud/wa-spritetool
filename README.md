@@ -80,18 +80,12 @@ my-terrain packed/
 └── Water.dir       copied through if the folder has one
 ```
 
-The output folder may not be the source folder — the archive would land among
-the art it was built from, where the next run would try to pack it. Leave the
+The output folder may not be the source folder. Leave the
 output off and a `<name> packed` folder is made beside the source.
 
-The folder has to be called `build`. That is the whole test: everything a
-terrain needs can be stood in for, so there is no missing file that proves a
-folder is not one, and running `pack-terrain` over a directory of holiday
-photographs by accident is worth making hard.
+The input folder has to be called `build`. 
 
-Anything essential the folder has not got is offered from `presets/`, so a
-terrain can begin as one object and a name.
-
+If a terrain is missing one or more assets that are required, defaults are offered.
 
 - the **core assets** are found by their fixed names: `text.img`, `soil.img`,
   `grass.img`, `gradient.img`, `bridge.img`, `bridge-l.img`, `bridge-r.img`,
@@ -101,12 +95,12 @@ terrain can begin as one object and a name.
 - **sprite overrides** are read from a `gfx`, `gfx0` or `gfx1` subfolder
 - `index.txt` is generated into the archive, alphabetically. 
 
-`toaster.img.bmp` is SpriteEditor's spelling and works, but the `.img` is
+`toaster.img.bmp` is the default WA spelling and works, but the `.img` is
 optional here: a plain `toaster.png` means the same thing, since an object is
 always an `.img` in the archive.
 
 An object's settings live in `object_settings.txt`, described below. One with
-no entry there takes the guide's defaults (`5 0 0 1 1 3`).
+no entry there takes the defaults (`5 0 0 1 1 3`).
 
 Both commands also take a `<name>.dir.txt` listing, and one inside a scanned
 folder takes precedence, for archives whose entry order matters:
@@ -145,14 +139,6 @@ art. Under that rule the median across a stock install is exactly 112.
 A terrain already inside the budget converts losslessly. Where both a `.bmp`
 and a `.png` exist the `.bmp` wins, being already indexed and so authored
 exactly.
-
-Rules the terrain guide states outright are refused rather than written by
-`pack-terrain`: more than 32 objects crashes the game on the land generator
-screen, and an object whose name contains a space crashes it on load -- the
-game reads the name only as far as the space, looks for a `.inf` that is not
-there, and dies on what it did not find. None of the 3217 objects in a stock
-install has one. Dimension and palette advice is reported and built anyway,
-since the shipped terrains do break it.
 
 | Flag | Effect |
 |---|---|
