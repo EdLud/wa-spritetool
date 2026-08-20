@@ -14,6 +14,10 @@ output/
 output*/
 tmp/
 
+# Local editor and agent config, not part of the tool.
+.claude/
+.vscode/
+
 # Python
 __pycache__/
 *.py[cod]
