@@ -2,11 +2,10 @@
 
 Extracts and packs Worms Armageddon graphics archives (.dir) and decodes the sprites and images inside them to BMP and animated GIF.
 
-Alongside it, [python/](python/) holds small tools for making the art that
-goes in: grass that sways, bubbles that rise, insects that mill about, a
-photograph tiled without a seam. They share one file of colour tables with
-the packer, so a sprite made here and a terrain packed here cannot disagree
-about what a palette index means.
+Alongside it, [extras/](extras/) holds tools to experiment with animations:
+grass that sways, bubbles that rise, insects that mill about. They share one
+file of colour tables with the packer, so a sprite made there and a terrain
+packed here cannot disagree about what a palette index means.
 
 
 The `.spr` sprite format has no public specification; it was reverse engineered
@@ -381,18 +380,19 @@ stock terrains that have one, where `_back.spr` and `back2.spr` -- which the
 game reaches differently -- are mostly compressed. Nothing needs passing;
 `--no-compress-spr` still turns compression off for every sprite.
 
-## Making the art
+## Extras
 
-`spritetool.py` packs a terrain; it does not draw one. [python/](python/) is
-where the drawing happens -- each tool in its own folder, run with `--help`:
+`spritetool.py` packs a terrain; it does not draw one. [extras/](extras/) is a
+set of tools to experiment with animations -- each in its own folder, run with
+`--help`:
 
 ```bash
-python3 python/make-grass-wind/make-grass-wind.py -o back2.spr.png
-python3 python/make-bubbles/make-bubbles.py --from layer.spr -o bubbles.png
+python3 extras/make-grass-wind/make-grass-wind.py -o back2.spr.png
+python3 extras/make-bubbles/make-bubbles.py --from layer.spr -o bubbles.png
 ```
 
 Most write a PNG sprite strip and a GIF beside it, so the animation can be
-looked at before the game sees it. See [python/README.md](python/README.md).
+looked at before the game sees it. See [extras/README.md](extras/README.md).
 
 ## Documentation
 

@@ -1,6 +1,10 @@
-# python
+# extras
 
-Small tools for making terrain art, and the modules they share.
+Tools to experiment with animations, and the modules they share.
+
+None of this is needed to pack a terrain -- `spritetool.py` does that on its
+own. These are for making the art that goes in, and for looking at how it
+moves before the game sees it.
 
 Three files sit at the top and are imported by everything else:
 
