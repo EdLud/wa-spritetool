@@ -24,3 +24,10 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# ...except under test/, where both the archive and what this tool makes of it
+# are the fixtures. They are game files, but small ones, and checking a decoder
+# against a description of a file rather than the file itself is no check.
+!test/**/*.dir
+!test/**/decompressed/
+!test/**/decompressed/**

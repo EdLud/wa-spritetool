@@ -1,0 +1,5 @@
+frames = 32
+height = 60
+width = 60
+framerate = 12
+flags = 1

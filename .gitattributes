@@ -1,0 +1,5 @@
+# The test fixtures are compared byte for byte, so nothing in them may be
+# rewritten on the way in or out. The .spd files carry CRLF because that is
+# what SpriteEditor writes and what the games ship; converting them would
+# make every fixture differ from the file it is supposed to describe.
+test/** -text -diff
