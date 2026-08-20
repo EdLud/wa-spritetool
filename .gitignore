@@ -18,6 +18,9 @@ tmp/
 .claude/
 .vscode/
 
+# Previews written by extras/preview_extras_gifs.py, regenerable in one run.
+extras/previews/
+
 # Python
 __pycache__/
 *.py[cod]

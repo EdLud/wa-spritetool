@@ -31,6 +31,25 @@ make-grass-wind/
 Run one with `--help` to see what it takes. Most write a PNG sprite strip and
 a GIF beside it, so you can look at the animation before the game does.
 
+## Seeing them all at once
+
+```bash
+./extras/preview_extras_gifs.py
+```
+
+Runs each animation tool at small settings and drops one GIF per tool into
+`extras/previews/`, which is gitignored. Worth doing after touching a shared
+module: a break there often shows up as motion going wrong rather than as an
+error, and a folder of GIFs is quicker to scan than five separate runs.
+
+A preview that comes out blank is reported as EMPTY rather than passing
+quietly -- the tools size their subjects against the canvas, so a small one
+can draw nothing at all while still exiting cleanly.
+
+`make-fly-bursts` is skipped unless `GFX0_DIR` points at a decompressed gfx0
+folder; it takes its frame geometry from the sprites it replaces, and this
+repo ships no game data.
+
 ## The tools
 
 **Animation** — `make-grass-wind` (blades swaying), `make-back2` (a reef
