@@ -1,0 +1,22 @@
+# Terrain working folders. Each is one terrain's source art and the scripts
+# that only ever built that terrain -- gigabytes of intermediates, and code
+# too specific to be worth reading. Kept locally, never pushed.
+Terrains/
+
+# Game data. Copyrighted, large, and not ours to redistribute.
+*.dir
+GFX Originals/
+
+# Output of the tools here. All reproducible with a single command.
+decompressed/
+extracted/
+output/
+output*/
+tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
