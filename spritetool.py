@@ -732,130 +732,13 @@ class SpriteFile:
             frames_data = b''.join(cells)
             frame_count = len(cells)
 
-        if Image is not None:
-            return SpriteFile._create_gif_pillow(
-                frames_data, palette, width, height, frame_count, framerate)
-
-        # GIF header
-        gif = b'GIF89a'
-
-        # Logical Screen Descriptor
-        gif += struct.pack('<H', width)
-        gif += struct.pack('<H', height)
-        gif += bytes([0xF7])  # Global Color Table Flag=1, Color Resolution=7, Sort Flag=0, Size of Global Color Table=7 (256 colors)
-        gif += bytes([0x00])  # Background Color Index
-        gif += bytes([0x00])  # Pixel Aspect Ratio
-
-        # Global Color Table (256 * 3 bytes, RGB format)
-        gif += palette
-
-        # Animation frames
-        for frame_idx in range(frame_count):
-            # Graphic Control Extension (animation timing)
-            gif += bytes([0x21, 0xF9])  # Extension introducer and label
-            gif += bytes([0x04])  # Block size
-            gif += bytes([0x00])  # Packed fields (no transparency)
-
-            # Delay in centiseconds. Anything under 2cs is clamped by most
-            # viewers to ~10cs, so keep a floor; 5cs matches the Pillow path's
-            # default when the sprite declares no rate.
-            delay = 5 if framerate <= 0 else max(2, round(100 / framerate))
-
-            gif += struct.pack('<H', delay)
-            gif += bytes([0x00, 0x00])  # Transparent color index and block terminator
-
-            # Image Descriptor
-            gif += bytes([0x2C])  # Image separator
-            gif += struct.pack('<H', 0)  # Image left
-            gif += struct.pack('<H', 0)  # Image top
-            gif += struct.pack('<H', width)
-            gif += struct.pack('<H', height)
-            gif += bytes([0x00])  # Packed fields (no local color table)
-
-            # Compress frame data using LZW
-            frame_start = frame_idx * width * height
-            frame_end = frame_start + width * height
-            frame_pixels = frames_data[frame_start:frame_end]
-
-            # Simple LZW compression
-            lzw_data = SpriteFile._lzw_encode(frame_pixels)
-            gif += bytes([0x08])  # LZW minimum code size
-            gif += SpriteFile._write_gif_data_blocks(lzw_data)
-
-        # GIF Trailer
-        gif += bytes([0x3B])
-
-        return gif
-
-    @staticmethod
-    def _lzw_encode(data: bytes, min_code_size: int = 8) -> bytes:
-        """LZW-compress a frame for GIF.
-
-        Codes are emitted least-significant-bit first at a width that grows
-        with the dictionary. The width must be bumped in the same pass that
-        emits the codes -- a decoder tracks dictionary growth as it reads, so
-        deciding widths separately from emission desynchronises the two and
-        truncates the image partway through.
-        """
-        clear_code = 1 << min_code_size
-        eoi_code = clear_code + 1
-
-        out = bytearray()
-        bit_buffer = 0
-        bits = 0
-
-        def emit(code, width):
-            nonlocal bit_buffer, bits
-            bit_buffer |= code << bits
-            bits += width
-            while bits >= 8:
-                out.append(bit_buffer & 0xFF)
-                bit_buffer >>= 8
-                bits -= 8
-
-        def reset():
-            return ({bytes([i]): i for i in range(clear_code)},
-                    eoi_code + 1, min_code_size + 1)
-
-        dictionary, next_code, code_size = reset()
-        emit(clear_code, code_size)
-
-        w = b''
-        for byte in data:
-            wc = w + bytes([byte])
-            if wc in dictionary:
-                w = wc
-                continue
-            emit(dictionary[w], code_size)
-            if next_code < 4096:
-                dictionary[wc] = next_code
-                next_code += 1
-                # The decoder adds its matching entry one step later, so widen
-                # only once next_code passes the current width's capacity.
-                if next_code > (1 << code_size) and code_size < 12:
-                    code_size += 1
-            else:
-                emit(clear_code, code_size)
-                dictionary, next_code, code_size = reset()
-            w = bytes([byte])
-
-        if w:
-            emit(dictionary[w], code_size)
-        emit(eoi_code, code_size)
-
-        if bits:
-            out.append(bit_buffer & 0xFF)
-        return bytes(out)
-
-    @staticmethod
-    def _write_gif_data_blocks(data: bytearray) -> bytes:
-        """Write GIF data sub-blocks (max 255 bytes each)"""
-        blocks = b''
-        for i in range(0, len(data), 255):
-            block = data[i:i+255]
-            blocks += bytes([len(block)]) + block
-        blocks += bytes([0x00])  # Block terminator
-        return blocks
+        # GIF is written with Pillow. There was a hand-rolled writer here as a
+        # fallback, and it silently produced corrupt frames twice -- a bad LZW
+        # code-width schedule, then missing frame disposal -- neither visible
+        # without decoding the result. Pillow is required now, so the second
+        # implementation is gone rather than kept as a trap.
+        return SpriteFile._create_gif_pillow(
+            frames_data, palette, width, height, frame_count, framerate)
 
 
 class ImageFile:
