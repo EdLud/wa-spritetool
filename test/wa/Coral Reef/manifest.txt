@@ -1,0 +1,600 @@
+Coral Reef, as this tool decodes it.
+Regenerate with test/make-manifest.sh and diff; any change is a
+change in how a shipped terrain is read.
+
+level.dir	6034443	sha256:408adf00f12a6b9de835ed51ddb07bc01d930c1da2153b2612dcf3dabfe31a29
+text.img	4160	sha256:1b3b665890bb5494d1564cb4231efe3bb27954fe7b16a0b304029ac03f9bbafd
+water.dir	1783589	sha256:33a3440b909774a7add9e7377d16df0bb48941d6857b9fe1a8d8a3c741758e15
+
+-- level.dir: 525 entries
+level/back2.spr	spr	1024x410x30	1746646
+level/bridge-l.img	img	64x85	998
+level/bridge-r.img	img	64x85	1294
+level/bridge.img	img	64x85	651
+level/debris.spr	spr	400x400x160	4566
+level/front.spr	spr	1024x250x128	1844464
+level/gfx0/circl100.spr	spr	200x200x4	93	gfx0-ok
+level/gfx0/circle25.spr	spr	50x50x8	141	gfx0-ok
+level/gfx0/circle50.spr	spr	100x100x8	141	gfx0-ok
+level/gfx0/circle75.spr	spr	150x150x4	93	gfx0-ok
+level/gfx0/cloudl.spr	spr	80x80x120	2847	gfx0-ok
+level/gfx0/cloudm.spr	spr	240x240x120	151295	gfx0-ok
+level/gfx0/clouds.spr	spr	160x160x120	226866	gfx0-ok
+level/gfx0/elips100.spr	spr	300x300x10	13889	gfx0-ok
+level/gfx0/elipse25.spr	spr	74x74x20	2115	gfx0-ok
+level/gfx0/elipse50.spr	spr	150x150x20	11588	gfx0-ok
+level/gfx0/elipse75.spr	spr	224x224x10	9813	gfx0-ok
+level/gfx0/exhaust.spr	spr	60x60x30	3146	gfx0-ok
+level/gfx0/firehit.spr	spr	50x50x9	660	gfx0-ok
+level/gfx0/flame1.spr	spr	60x60x32	3084	gfx0-ok
+level/gfx0/flame2.spr	spr	60x60x32	2973	gfx0-ok
+level/gfx0/hexhaust.spr	spr	60x60x28	2796	gfx0-ok
+level/gfx0/kamismk.spr	spr	60x60x10	1011	gfx0-ok
+level/gfx0/mexhaust.spr	spr	60x60x30	3209	gfx0-ok
+level/gfx0/petrol-1.spr	spr	60x60x64	5040	gfx0-ok
+level/gfx0/petrol-2.spr	spr	60x60x64	3980	gfx0-ok
+level/gfx0/petrol-3.spr	spr	60x60x64	3164	gfx0-ok
+level/gfx0/petrol-4.spr	spr	60x60x64	2781	gfx0-ok
+level/gfx0/petrol1.spr	spr	60x60x20	1082	gfx0-ok
+level/gfx0/ropetip.spr	spr	60x60x64	2340	gfx0-ok
+level/gfx0/smkdrk20.spr	spr	20x20x28	588	gfx0-ok
+level/gfx0/smkdrk30.spr	spr	30x30x28	807	gfx0-ok
+level/gfx0/smkdrk40.spr	spr	40x40x28	1467	gfx0-ok
+level/gfx0/smklt100.spr	spr	134x134x28	6842	gfx0-ok
+level/gfx0/smklt25.spr	spr	44x44x28	1747	gfx0-ok
+level/gfx0/smklt50.spr	spr	60x60x28	2678	gfx0-ok
+level/gfx0/smklt75.spr	spr	90x90x28	4058	gfx0-ok
+level/gfx0/tcloud.spr	spr	60x60x36	5262	gfx0-ok
+level/gfx0/waccuse.spr	spr	60x60x36	3600	gfx0-ok
+level/gfx0/waccused.spr	spr	60x60x36	3695	gfx0-ok
+level/gfx0/waccuseu.spr	spr	60x60x36	3369	gfx0-ok
+level/gfx0/wairlnk.spr	spr	60x60x10	2470	gfx0-ok
+level/gfx0/wairlnkd.spr	spr	60x60x10	2572	gfx0-ok
+level/gfx0/wairlnku.spr	spr	60x60x10	2537	gfx0-ok
+level/gfx0/wairtlk.spr	spr	60x60x10	4170	gfx0-ok
+level/gfx0/wairtlkd.spr	spr	60x60x10	4262	gfx0-ok
+level/gfx0/wairtlku.spr	spr	60x60x10	4170	gfx0-ok
+level/gfx0/waxebak.spr	spr	104x104x18	7858	gfx0-ok
+level/gfx0/waxebakd.spr	spr	104x104x18	8170	gfx0-ok
+level/gfx0/waxebaku.spr	spr	104x104x18	8048	gfx0-ok
+level/gfx0/waxelk2.spr	spr	104x104x23	10541	gfx0-ok
+level/gfx0/waxelk2d.spr	spr	104x104x23	10471	gfx0-ok
+level/gfx0/waxelk2u.spr	spr	104x104x23	11328	gfx0-ok
+level/gfx0/waxelnk.spr	spr	104x104x15	4061	gfx0-ok
+level/gfx0/waxelnkd.spr	spr	104x104x15	4129	gfx0-ok
+level/gfx0/waxelnku.spr	spr	104x104x15	4093	gfx0-ok
+level/gfx0/waxeswn.spr	spr	104x104x4	2946	gfx0-ok
+level/gfx0/waxeswnd.spr	spr	104x104x4	2997	gfx0-ok
+level/gfx0/waxeswnu.spr	spr	104x104x4	2973	gfx0-ok
+level/gfx0/wbackflp.spr	spr	60x60x22	5226	gfx0-ok
+level/gfx0/wbanlnk.spr	spr	60x60x10	2349	gfx0-ok
+level/gfx0/wbanlnkd.spr	spr	60x60x10	2422	gfx0-ok
+level/gfx0/wbanlnku.spr	spr	60x60x10	2469	gfx0-ok
+level/gfx0/wbataim.spr	spr	60x60x32	9474	gfx0-ok
+level/gfx0/wbataimd.spr	spr	60x60x32	9713	gfx0-ok
+level/gfx0/wbataimu.spr	spr	60x60x32	9748	gfx0-ok
+level/gfx0/wbatbk2.spr	spr	60x60x10	2220	gfx0-ok
+level/gfx0/wbatbk2d.spr	spr	60x60x10	2407	gfx0-ok
+level/gfx0/wbatbk2u.spr	spr	60x60x10	2122	gfx0-ok
+level/gfx0/wbatfrd.spr	spr	60x60x32	8152	gfx0-ok
+level/gfx0/wbatfrdd.spr	spr	60x60x32	8410	gfx0-ok
+level/gfx0/wbatfrdu.spr	spr	60x60x32	8349	gfx0-ok
+level/gfx0/wbatlnk.spr	spr	60x60x10	2464	gfx0-ok
+level/gfx0/wbatlnkd.spr	spr	60x60x10	2648	gfx0-ok
+level/gfx0/wbatlnku.spr	spr	60x60x10	2521	gfx0-ok
+level/gfx0/wbatrope.spr	spr	60x60x64	15902	gfx0-ok
+level/gfx0/wbaz.spr	spr	60x60x32	8192	gfx0-ok
+level/gfx0/wbaz2.spr	spr	60x60x32	7943	gfx0-ok
+level/gfx0/wbaz2d.spr	spr	60x60x32	8131	gfx0-ok
+level/gfx0/wbaz2u.spr	spr	60x60x32	8167	gfx0-ok
+level/gfx0/wbaz3.spr	spr	60x60x32	8308	gfx0-ok
+level/gfx0/wbaz3d.spr	spr	60x60x32	8430	gfx0-ok
+level/gfx0/wbaz3u.spr	spr	60x60x32	8475	gfx0-ok
+level/gfx0/wbaz4.spr	spr	60x60x32	8259	gfx0-ok
+level/gfx0/wbaz4d.spr	spr	60x60x32	8371	gfx0-ok
+level/gfx0/wbaz4u.spr	spr	60x60x32	8419	gfx0-ok
+level/gfx0/wbaz5.spr	spr	60x60x32	8070	gfx0-ok
+level/gfx0/wbaz5d.spr	spr	60x60x32	8214	gfx0-ok
+level/gfx0/wbaz5u.spr	spr	60x60x32	8284	gfx0-ok
+level/gfx0/wbazd.spr	spr	60x60x32	8288	gfx0-ok
+level/gfx0/wbazlnk.spr	spr	60x60x7	2002	gfx0-ok
+level/gfx0/wbazlnkd.spr	spr	60x60x7	2086	gfx0-ok
+level/gfx0/wbazlnku.spr	spr	60x60x7	2006	gfx0-ok
+level/gfx0/wbazu.spr	spr	60x60x32	8338	gfx0-ok
+level/gfx0/wbghead.spr	spr	60x60x10	1400	gfx0-ok
+level/gfx0/wbgheadd.spr	spr	60x60x10	1322	gfx0-ok
+level/gfx0/wbgheadu.spr	spr	60x60x10	1244	gfx0-ok
+level/gfx0/wblink1.spr	spr	60x60x6	1009	gfx0-ok
+level/gfx0/wblink1d.spr	spr	60x60x6	1054	gfx0-ok
+level/gfx0/wblink1u.spr	spr	60x60x6	972	gfx0-ok
+level/gfx0/wblink2.spr	spr	60x60x16	1949	gfx0-ok
+level/gfx0/wblink2d.spr	spr	60x60x16	2070	gfx0-ok
+level/gfx0/wblink2u.spr	spr	60x60x16	2171	gfx0-ok
+level/gfx0/wblowa.spr	spr	60x60x13	1929	gfx0-ok
+level/gfx0/wblowad.spr	spr	60x60x13	1634	gfx0-ok
+level/gfx0/wblowau.spr	spr	60x60x13	1959	gfx0-ok
+level/gfx0/wblowlk.spr	spr	60x60x15	3076	gfx0-ok
+level/gfx0/wblowlkd.spr	spr	60x60x15	3169	gfx0-ok
+level/gfx0/wblowlku.spr	spr	60x60x15	3289	gfx0-ok
+level/gfx0/wbloww.spr	spr	80x80x15	6629	gfx0-ok
+level/gfx0/wblowwd.spr	spr	80x80x15	7067	gfx0-ok
+level/gfx0/wblowwu.spr	spr	80x80x15	7382	gfx0-ok
+level/gfx0/wbndlnk.spr	spr	60x60x26	3526	gfx0-ok
+level/gfx0/wbndlnkd.spr	spr	60x60x26	4319	gfx0-ok
+level/gfx0/wbndlnku.spr	spr	60x60x26	4455	gfx0-ok
+level/gfx0/wbow.spr	spr	60x60x32	9751	gfx0-ok
+level/gfx0/wbowbk2.spr	spr	60x60x16	3648	gfx0-ok
+level/gfx0/wbowbk2d.spr	spr	60x60x16	3705	gfx0-ok
+level/gfx0/wbowbk2u.spr	spr	60x60x16	3631	gfx0-ok
+level/gfx0/wbowd.spr	spr	60x60x32	10055	gfx0-ok
+level/gfx0/wbowf.spr	spr	60x60x16	5176	gfx0-ok
+level/gfx0/wbowfd.spr	spr	60x60x16	5400	gfx0-ok
+level/gfx0/wbowfu.spr	spr	60x60x16	5176	gfx0-ok
+level/gfx0/wbowlnk.spr	spr	60x60x16	4018	gfx0-ok
+level/gfx0/wbowlnkd.spr	spr	60x60x16	3973	gfx0-ok
+level/gfx0/wbowlnku.spr	spr	60x60x16	4129	gfx0-ok
+level/gfx0/wbowp.spr	spr	60x60x16	5383	gfx0-ok
+level/gfx0/wbowpd.spr	spr	60x60x16	5514	gfx0-ok
+level/gfx0/wbowpu.spr	spr	60x60x16	5488	gfx0-ok
+level/gfx0/wbowu.spr	spr	60x60x32	10211	gfx0-ok
+level/gfx0/wbrth1.spr	spr	60x60x20	2469	gfx0-ok
+level/gfx0/wbrth1d.spr	spr	60x60x20	2282	gfx0-ok
+level/gfx0/wbrth1u.spr	spr	60x60x20	2236	gfx0-ok
+level/gfx0/wbrth2.spr	spr	60x60x13	2136	gfx0-ok
+level/gfx0/wbrth2d.spr	spr	60x60x13	2219	gfx0-ok
+level/gfx0/wbrth2u.spr	spr	60x60x13	2113	gfx0-ok
+level/gfx0/wbsbaim.spr	spr	60x60x32	10558	gfx0-ok
+level/gfx0/wbsbaimd.spr	spr	60x60x32	10634	gfx0-ok
+level/gfx0/wbsbaimu.spr	spr	60x60x32	10919	gfx0-ok
+level/gfx0/wbsbbk2.spr	spr	60x60x10	2547	gfx0-ok
+level/gfx0/wbsbbk2d.spr	spr	60x60x10	2598	gfx0-ok
+level/gfx0/wbsbbk2u.spr	spr	60x60x10	2498	gfx0-ok
+level/gfx0/wbsblnk.spr	spr	60x60x10	2695	gfx0-ok
+level/gfx0/wbsblnkd.spr	spr	60x60x10	2788	gfx0-ok
+level/gfx0/wbsblnku.spr	spr	60x60x10	2772	gfx0-ok
+level/gfx0/wbsbswn.spr	spr	60x60x32	10722	gfx0-ok
+level/gfx0/wbsbswnd.spr	spr	60x60x32	10718	gfx0-ok
+level/gfx0/wbsbswnu.spr	spr	60x60x32	10574	gfx0-ok
+level/gfx0/wbungee.spr	spr	60x60x19	5384	gfx0-ok
+level/gfx0/wbz2lnk.spr	spr	60x60x7	1862	gfx0-ok
+level/gfx0/wbz2lnkd.spr	spr	60x60x7	1935	gfx0-ok
+level/gfx0/wbz2lnku.spr	spr	60x60x7	1885	gfx0-ok
+level/gfx0/wbz3lnk.spr	spr	60x60x7	1880	gfx0-ok
+level/gfx0/wbz3lnkd.spr	spr	60x60x7	1947	gfx0-ok
+level/gfx0/wbz3lnku.spr	spr	60x60x7	1902	gfx0-ok
+level/gfx0/wbz4lnk.spr	spr	60x60x7	1917	gfx0-ok
+level/gfx0/wbz4lnkd.spr	spr	60x60x7	2018	gfx0-ok
+level/gfx0/wbz4lnku.spr	spr	60x60x7	1973	gfx0-ok
+level/gfx0/wbz5lnk.spr	spr	60x60x7	1793	gfx0-ok
+level/gfx0/wbz5lnkd.spr	spr	60x60x7	1889	gfx0-ok
+level/gfx0/wbz5lnku.spr	spr	60x60x7	1825	gfx0-ok
+level/gfx0/wclslnk.spr	spr	60x60x10	2411	gfx0-ok
+level/gfx0/wclslnkd.spr	spr	60x60x10	2445	gfx0-ok
+level/gfx0/wclslnku.spr	spr	60x60x10	2485	gfx0-ok
+level/gfx0/wcough.spr	spr	60x60x13	2242	gfx0-ok
+level/gfx0/wcoughd.spr	spr	60x60x13	2366	gfx0-ok
+level/gfx0/wcoughu.spr	spr	60x60x13	2345	gfx0-ok
+level/gfx0/wcowlnk.spr	spr	60x60x10	3243	gfx0-ok
+level/gfx0/wcowlnkd.spr	spr	60x60x10	3311	gfx0-ok
+level/gfx0/wcowlnku.spr	spr	60x60x10	3347	gfx0-ok
+level/gfx0/wcrate0.spr	spr	60x60x61	20362	gfx0-ok
+level/gfx0/wcrate1.spr	spr	60x60x15	4571	gfx0-ok
+level/gfx0/wcrate2.spr	spr	74x74x20	19520	gfx0-ok
+level/gfx0/wcratev.spr	spr	60x60x15	4588	gfx0-ok
+level/gfx0/wdie.spr	spr	60x60x60	11921	gfx0-ok
+level/gfx0/wdrill.spr	spr	60x60x4	1404	gfx0-ok
+level/gfx0/wdrllnk.spr	spr	60x60x13	2930	gfx0-ok
+level/gfx0/wdrllnkd.spr	spr	60x60x15	3352	gfx0-ok
+level/gfx0/wdrllnku.spr	spr	60x60x15	3324	gfx0-ok
+level/gfx0/wdynlnk.spr	spr	60x60x10	2257	gfx0-ok
+level/gfx0/wdynlnkd.spr	spr	60x60x10	2322	gfx0-ok
+level/gfx0/wdynlnku.spr	spr	60x60x10	2350	gfx0-ok
+level/gfx0/wexhaust.spr	spr	60x60x20	902	gfx0-ok
+level/gfx0/wfall.spr	spr	60x60x2	541	gfx0-ok
+level/gfx0/wfalldn.spr	spr	60x60x2	541	gfx0-ok
+level/gfx0/wfirair.spr	spr	60x60x11	4497	gfx0-ok
+level/gfx0/wfirbl1.spr	spr	60x60x24	7408	gfx0-ok
+level/gfx0/wfirbl1d.spr	spr	60x60x24	7443	gfx0-ok
+level/gfx0/wfirbl1u.spr	spr	60x60x24	7318	gfx0-ok
+level/gfx0/wfirbl2.spr	spr	60x60x12	4930	gfx0-ok
+level/gfx0/wfirbl2d.spr	spr	60x60x12	4966	gfx0-ok
+level/gfx0/wfirbl2u.spr	spr	60x60x12	4894	gfx0-ok
+level/gfx0/wfist.spr	spr	60x60x17	2586	gfx0-ok
+level/gfx0/wfistd.spr	spr	60x60x17	2805	gfx0-ok
+level/gfx0/wfistu.spr	spr	60x60x17	2425	gfx0-ok
+level/gfx0/wflm.spr	spr	60x60x32	8816	gfx0-ok
+level/gfx0/wflmd.spr	spr	60x60x32	8660	gfx0-ok
+level/gfx0/wflmlnk.spr	spr	60x60x15	2944	gfx0-ok
+level/gfx0/wflmlnkd.spr	spr	60x60x15	2803	gfx0-ok
+level/gfx0/wflmlnku.spr	spr	60x60x15	2965	gfx0-ok
+level/gfx0/wflmu.spr	spr	60x60x32	9080	gfx0-ok
+level/gfx0/wfly1.spr	spr	60x60x32	7187	gfx0-ok
+level/gfx0/wfly2.spr	spr	60x60x32	6890	gfx0-ok
+level/gfx0/wfly3.spr	spr	60x60x32	6590	gfx0-ok
+level/gfx0/wflydn.spr	spr	60x60x2	541	gfx0-ok
+level/gfx0/wflylnk.spr	spr	60x60x7	1413	gfx0-ok
+level/gfx0/wflyup.spr	spr	60x60x2	531	gfx0-ok
+level/gfx0/wglnce1.spr	spr	60x60x15	1582	gfx0-ok
+level/gfx0/wglnce1d.spr	spr	60x60x15	1593	gfx0-ok
+level/gfx0/wglnce1u.spr	spr	60x60x15	1566	gfx0-ok
+level/gfx0/wglnce2.spr	spr	60x60x15	1542	gfx0-ok
+level/gfx0/wglnce2d.spr	spr	60x60x15	1683	gfx0-ok
+level/gfx0/wglnce2u.spr	spr	60x60x15	1573	gfx0-ok
+level/gfx0/wgrnlnk.spr	spr	60x60x10	2350	gfx0-ok
+level/gfx0/wgrnlnkd.spr	spr	60x60x10	2408	gfx0-ok
+level/gfx0/wgrnlnku.spr	spr	60x60x10	2434	gfx0-ok
+level/gfx0/whandf.spr	spr	60x60x32	9628	gfx0-ok
+level/gfx0/whandfd.spr	spr	60x60x32	9514	gfx0-ok
+level/gfx0/whandfu.spr	spr	60x60x32	9642	gfx0-ok
+level/gfx0/whandg.spr	spr	60x60x32	7746	gfx0-ok
+level/gfx0/whandgd.spr	spr	60x60x32	7671	gfx0-ok
+level/gfx0/whandgu.spr	spr	60x60x32	7775	gfx0-ok
+level/gfx0/whatlnk.spr	spr	60x60x15	2378	gfx0-ok
+level/gfx0/whatlnkd.spr	spr	60x60x15	2472	gfx0-ok
+level/gfx0/whatlnku.spr	spr	60x60x15	2655	gfx0-ok
+level/gfx0/whgnlnk.spr	spr	60x60x10	2147	gfx0-ok
+level/gfx0/whgnlnkd.spr	spr	60x60x10	2220	gfx0-ok
+level/gfx0/whgnlnku.spr	spr	60x60x10	2230	gfx0-ok
+level/gfx0/whgrlnk.spr	spr	60x60x10	2272	gfx0-ok
+level/gfx0/whgrlnkd.spr	spr	60x60x10	2312	gfx0-ok
+level/gfx0/whgrlnku.spr	spr	60x60x10	2369	gfx0-ok
+level/gfx0/wiceblnk.spr	spr	60x60x12	1150	gfx0-ok
+level/gfx0/wiceglnt.spr	spr	60x60x9	1006	gfx0-ok
+level/gfx0/wicelk2.spr	spr	60x60x20	5792	gfx0-ok
+level/gfx0/wicelk2d.spr	spr	60x60x20	5814	gfx0-ok
+level/gfx0/wicelk2u.spr	spr	60x60x20	5841	gfx0-ok
+level/gfx0/wicelk3.spr	spr	60x60x20	5154	gfx0-ok
+level/gfx0/wicelk3d.spr	spr	60x60x20	5152	gfx0-ok
+level/gfx0/wicelk3u.spr	spr	60x60x20	5188	gfx0-ok
+level/gfx0/wicelnk.spr	spr	60x60x18	3447	gfx0-ok
+level/gfx0/wicelnkd.spr	spr	60x60x18	3648	gfx0-ok
+level/gfx0/wicelnku.spr	spr	60x60x18	3648	gfx0-ok
+level/gfx0/wicelook.spr	spr	60x60x13	855	gfx0-ok
+level/gfx0/wicestnd.spr	spr	60x60x1	389	gfx0-ok
+level/gfx0/wjapbak.spr	spr	60x60x9	1882	gfx0-ok
+level/gfx0/wjapbakd.spr	spr	60x60x9	1978	gfx0-ok
+level/gfx0/wjapbaku.spr	spr	60x60x9	2022	gfx0-ok
+level/gfx0/wjetflmb.spr	spr	60x60x6	313	gfx0-ok
+level/gfx0/wjetflmd.spr	spr	60x60x6	361	gfx0-ok
+level/gfx0/wjetfly1.spr	spr	60x60x1	537	gfx0-ok
+level/gfx0/wjetfly2.spr	spr	60x60x1	506	gfx0-ok
+level/gfx0/wjetfly3.spr	spr	60x60x1	459	gfx0-ok
+level/gfx0/wjetfly4.spr	spr	60x60x1	425	gfx0-ok
+level/gfx0/wjetlnk.spr	spr	60x60x10	2596	gfx0-ok
+level/gfx0/wjetlnkd.spr	spr	60x60x10	2706	gfx0-ok
+level/gfx0/wjetlnku.spr	spr	60x60x10	2563	gfx0-ok
+level/gfx0/wjump.spr	spr	60x60x10	1983	gfx0-ok
+level/gfx0/wjumpd.spr	spr	60x60x10	2105	gfx0-ok
+level/gfx0/wjumpu.spr	spr	60x60x10	2112	gfx0-ok
+level/gfx0/wkambmr.spr	spr	60x60x20	3496	gfx0-ok
+level/gfx0/wkambmrd.spr	spr	60x60x20	3496	gfx0-ok
+level/gfx0/wkambmru.spr	spr	60x60x20	3496	gfx0-ok
+level/gfx0/wkami1.spr	spr	60x60x5	2573	gfx0-ok
+level/gfx0/wkami2.spr	spr	60x60x5	2562	gfx0-ok
+level/gfx0/wkami3.spr	spr	60x60x5	2193	gfx0-ok
+level/gfx0/wkami4.spr	spr	60x60x5	2473	gfx0-ok
+level/gfx0/wkami5.spr	spr	60x60x5	2528	gfx0-ok
+level/gfx0/wkamjmp.spr	spr	60x60x11	5928	gfx0-ok
+level/gfx0/wkamlnk.spr	spr	60x60x9	2018	gfx0-ok
+level/gfx0/wkamlnkd.spr	spr	60x60x9	2054	gfx0-ok
+level/gfx0/wkamlnku.spr	spr	60x60x9	2157	gfx0-ok
+level/gfx0/wland1.spr	spr	60x60x6	1238	gfx0-ok
+level/gfx0/wland1d.spr	spr	60x60x6	1325	gfx0-ok
+level/gfx0/wland1u.spr	spr	60x60x6	1297	gfx0-ok
+level/gfx0/wland2.spr	spr	60x60x9	1754	gfx0-ok
+level/gfx0/wland2d.spr	spr	60x60x9	1849	gfx0-ok
+level/gfx0/wland2u.spr	spr	60x60x9	1921	gfx0-ok
+level/gfx0/wlazy.spr	spr	60x60x33	2483	gfx0-ok
+level/gfx0/wlazyd.spr	spr	60x60x33	2528	gfx0-ok
+level/gfx0/wlazyu.spr	spr	60x60x33	2474	gfx0-ok
+level/gfx0/wmgnlnk.spr	spr	60x60x10	2648	gfx0-ok
+level/gfx0/wmgnlnkd.spr	spr	60x60x10	2764	gfx0-ok
+level/gfx0/wmgnlnku.spr	spr	60x60x10	2792	gfx0-ok
+level/gfx0/wmini.spr	spr	60x60x32	10686	gfx0-ok
+level/gfx0/wminid.spr	spr	60x60x32	10547	gfx0-ok
+level/gfx0/wminif.spr	spr	90x90x32	16240	gfx0-ok
+level/gfx0/wminifd.spr	spr	90x90x32	16915	gfx0-ok
+level/gfx0/wminifu.spr	spr	90x90x32	17183	gfx0-ok
+level/gfx0/wminiu.spr	spr	60x60x32	10818	gfx0-ok
+level/gfx0/wminlnk.spr	spr	60x60x10	2230	gfx0-ok
+level/gfx0/wminlnkd.spr	spr	60x60x10	2274	gfx0-ok
+level/gfx0/wminlnku.spr	spr	60x60x10	2306	gfx0-ok
+level/gfx0/wmollnk.spr	spr	60x60x10	2476	gfx0-ok
+level/gfx0/wmollnkd.spr	spr	60x60x10	2528	gfx0-ok
+level/gfx0/wmollnku.spr	spr	60x60x10	2584	gfx0-ok
+level/gfx0/wmunch.spr	spr	60x60x98	14819	gfx0-ok
+level/gfx0/wmunchd.spr	spr	60x60x98	15766	gfx0-ok
+level/gfx0/wmunchu.spr	spr	60x60x98	14821	gfx0-ok
+level/gfx0/wnukelk.spr	spr	60x60x15	2312	gfx0-ok
+level/gfx0/wnukelkd.spr	spr	60x60x15	2402	gfx0-ok
+level/gfx0/wnukelku.spr	spr	60x60x15	2413	gfx0-ok
+level/gfx0/wolook.spr	spr	60x60x15	1685	gfx0-ok
+level/gfx0/wolookd.spr	spr	60x60x15	1684	gfx0-ok
+level/gfx0/wolooku.spr	spr	60x60x15	1536	gfx0-ok
+level/gfx0/wormhit1.spr	spr	60x60x10	572	gfx0-ok
+level/gfx0/wormhit2.spr	spr	60x60x10	448	gfx0-ok
+level/gfx0/wparacht.spr	spr	90x90x17	12605	gfx0-ok
+level/gfx0/wparalnk.spr	spr	90x90x17	11610	gfx0-ok
+level/gfx0/wparbak.spr	spr	90x90x6	3234	gfx0-ok
+level/gfx0/wparbakd.spr	spr	90x90x6	3260	gfx0-ok
+level/gfx0/wparbaku.spr	spr	90x90x6	3401	gfx0-ok
+level/gfx0/wpbmlnk.spr	spr	60x60x10	2292	gfx0-ok
+level/gfx0/wpbmlnkd.spr	spr	60x60x10	2346	gfx0-ok
+level/gfx0/wpbmlnku.spr	spr	60x60x10	2392	gfx0-ok
+level/gfx0/wpbrth.spr	spr	60x60x13	1622	gfx0-ok
+level/gfx0/wpbrthd.spr	spr	60x60x13	1710	gfx0-ok
+level/gfx0/wpbrthu.spr	spr	60x60x13	1750	gfx0-ok
+level/gfx0/wpbrtlk.spr	spr	60x60x15	2246	gfx0-ok
+level/gfx0/wpbrtlkd.spr	spr	60x60x15	2297	gfx0-ok
+level/gfx0/wpbrtlku.spr	spr	60x60x15	2208	gfx0-ok
+level/gfx0/wpeek.spr	spr	60x60x17	1119	gfx0-ok
+level/gfx0/wpeekd.spr	spr	60x60x17	1263	gfx0-ok
+level/gfx0/wpeeku.spr	spr	60x60x17	1208	gfx0-ok
+level/gfx0/wpncbak.spr	spr	60x60x8	1823	gfx0-ok
+level/gfx0/wpncbakd.spr	spr	60x60x8	1929	gfx0-ok
+level/gfx0/wpncbaku.spr	spr	60x60x8	2019	gfx0-ok
+level/gfx0/wpnclnk.spr	spr	60x60x9	2033	gfx0-ok
+level/gfx0/wpnclnkd.spr	spr	60x60x9	2121	gfx0-ok
+level/gfx0/wpnclnku.spr	spr	60x60x9	2173	gfx0-ok
+level/gfx0/wpnctop.spr	spr	60x60x13	3540	gfx0-ok
+level/gfx0/wpncup.spr	spr	60x60x3	1080	gfx0-ok
+level/gfx0/wprdbk2.spr	spr	60x60x10	2144	gfx0-ok
+level/gfx0/wprdbk2d.spr	spr	60x60x10	2206	gfx0-ok
+level/gfx0/wprdbk2u.spr	spr	60x60x10	2108	gfx0-ok
+level/gfx0/wprdlnk.spr	spr	60x60x6	1299	gfx0-ok
+level/gfx0/wprdlnkd.spr	spr	60x60x6	1348	gfx0-ok
+level/gfx0/wprdlnku.spr	spr	60x60x6	1281	gfx0-ok
+level/gfx0/wprod.spr	spr	60x60x5	1223	gfx0-ok
+level/gfx0/wprodd.spr	spr	60x60x5	1241	gfx0-ok
+level/gfx0/wprodu.spr	spr	60x60x5	1230	gfx0-ok
+level/gfx0/wroll.spr	spr	60x60x32	6502	gfx0-ok
+level/gfx0/wscarey.spr	spr	60x60x20	1367	gfx0-ok
+level/gfx0/wscareyd.spr	spr	60x60x20	1427	gfx0-ok
+level/gfx0/wscareyu.spr	spr	60x60x20	1326	gfx0-ok
+level/gfx0/wscrtch.spr	spr	60x60x54	6318	gfx0-ok
+level/gfx0/wscrtchd.spr	spr	60x60x54	5654	gfx0-ok
+level/gfx0/wscrtchu.spr	spr	60x60x54	6783	gfx0-ok
+level/gfx0/wselect.spr	spr	60x60x16	1967	gfx0-ok
+level/gfx0/wselectd.spr	spr	60x60x16	2050	gfx0-ok
+level/gfx0/wselectu.spr	spr	60x60x16	1999	gfx0-ok
+level/gfx0/wsellnk.spr	spr	60x60x12	1934	gfx0-ok
+level/gfx0/wsellnkd.spr	spr	60x60x12	2020	gfx0-ok
+level/gfx0/wsellnku.spr	spr	60x60x12	1819	gfx0-ok
+level/gfx0/wshglnk.spr	spr	60x60x10	1654	gfx0-ok
+level/gfx0/wshglnkd.spr	spr	60x60x10	1809	gfx0-ok
+level/gfx0/wshglnku.spr	spr	60x60x10	1842	gfx0-ok
+level/gfx0/wshotf.spr	spr	60x60x32	9124	gfx0-ok
+level/gfx0/wshotfd.spr	spr	60x60x32	9229	gfx0-ok
+level/gfx0/wshotfu.spr	spr	60x60x32	9761	gfx0-ok
+level/gfx0/wshotg.spr	spr	60x60x32	6785	gfx0-ok
+level/gfx0/wshotgd.spr	spr	60x60x32	6645	gfx0-ok
+level/gfx0/wshotgu.spr	spr	60x60x32	7131	gfx0-ok
+level/gfx0/wshotp.spr	spr	60x60x32	6904	gfx0-ok
+level/gfx0/wshotpd.spr	spr	60x60x32	6696	gfx0-ok
+level/gfx0/wshotpu.spr	spr	60x60x32	7233	gfx0-ok
+level/gfx0/wshplnk.spr	spr	60x60x10	2732	gfx0-ok
+level/gfx0/wshplnkd.spr	spr	60x60x10	2811	gfx0-ok
+level/gfx0/wshplnku.spr	spr	60x60x10	2839	gfx0-ok
+level/gfx0/wskipgo.spr	spr	60x60x9	3453	gfx0-ok
+level/gfx0/wskipgod.spr	spr	60x60x9	3434	gfx0-ok
+level/gfx0/wskipgou.spr	spr	60x60x9	3465	gfx0-ok
+level/gfx0/wsknlnk.spr	spr	60x60x10	3204	gfx0-ok
+level/gfx0/wsknlnkd.spr	spr	60x60x10	3273	gfx0-ok
+level/gfx0/wsknlnku.spr	spr	60x60x10	3323	gfx0-ok
+level/gfx0/wskplnk.spr	spr	60x60x5	1107	gfx0-ok
+level/gfx0/wskplnkd.spr	spr	60x60x5	1113	gfx0-ok
+level/gfx0/wskplnku.spr	spr	60x60x5	1145	gfx0-ok
+level/gfx0/wsldlk1.spr	spr	60x60x22	3909	gfx0-ok
+level/gfx0/wsldlk1d.spr	spr	60x60x22	3981	gfx0-ok
+level/gfx0/wsldlk1u.spr	spr	60x60x22	4113	gfx0-ok
+level/gfx0/wsldlk2.spr	spr	60x60x36	6546	gfx0-ok
+level/gfx0/wsldlk2d.spr	spr	60x60x36	6636	gfx0-ok
+level/gfx0/wsldlk2u.spr	spr	60x60x36	6568	gfx0-ok
+level/gfx0/wslide.spr	spr	60x60x3	725	gfx0-ok
+level/gfx0/wslided.spr	spr	60x60x3	762	gfx0-ok
+level/gfx0/wslideu.spr	spr	60x60x3	709	gfx0-ok
+level/gfx0/wsurlnk.spr	spr	60x60x10	2170	gfx0-ok
+level/gfx0/wsurlnkd.spr	spr	60x60x10	2215	gfx0-ok
+level/gfx0/wsurlnku.spr	spr	60x60x10	2257	gfx0-ok
+level/gfx0/wsurndr.spr	spr	60x60x16	4347	gfx0-ok
+level/gfx0/wsurndrd.spr	spr	60x60x16	4424	gfx0-ok
+level/gfx0/wsurndru.spr	spr	60x60x16	4585	gfx0-ok
+level/gfx0/wtache.spr	spr	60x60x60	6367	gfx0-ok
+level/gfx0/wtached.spr	spr	60x60x60	6601	gfx0-ok
+level/gfx0/wtacheu.spr	spr	60x60x60	6622	gfx0-ok
+level/gfx0/wteldsv.spr	spr	60x60x48	15876	gfx0-ok
+level/gfx0/wteldsvd.spr	spr	60x60x48	15601	gfx0-ok
+level/gfx0/wteldsvu.spr	spr	60x60x48	15609	gfx0-ok
+level/gfx0/wtellnk.spr	spr	60x60x10	2382	gfx0-ok
+level/gfx0/wtellnkd.spr	spr	60x60x10	2460	gfx0-ok
+level/gfx0/wtellnku.spr	spr	60x60x10	2469	gfx0-ok
+level/gfx0/wteltlk.spr	spr	60x60x10	3193	gfx0-ok
+level/gfx0/wteltlkd.spr	spr	60x60x10	3200	gfx0-ok
+level/gfx0/wteltlku.spr	spr	60x60x10	3083	gfx0-ok
+level/gfx0/wthrbak.spr	spr	60x60x10	1803	gfx0-ok
+level/gfx0/wthrbakd.spr	spr	60x60x10	1930	gfx0-ok
+level/gfx0/wthrbaku.spr	spr	60x60x10	1794	gfx0-ok
+level/gfx0/wthrban.spr	spr	60x60x32	9118	gfx0-ok
+level/gfx0/wthrband.spr	spr	60x60x32	9142	gfx0-ok
+level/gfx0/wthrbanu.spr	spr	60x60x32	9371	gfx0-ok
+level/gfx0/wthrcls.spr	spr	60x60x32	8806	gfx0-ok
+level/gfx0/wthrclsd.spr	spr	60x60x32	8645	gfx0-ok
+level/gfx0/wthrclsu.spr	spr	60x60x32	8947	gfx0-ok
+level/gfx0/wthrgrn.spr	spr	60x60x32	8339	gfx0-ok
+level/gfx0/wthrgrnd.spr	spr	60x60x32	8334	gfx0-ok
+level/gfx0/wthrgrnu.spr	spr	60x60x32	8527	gfx0-ok
+level/gfx0/wthrhgr.spr	spr	60x60x32	8321	gfx0-ok
+level/gfx0/wthrhgrd.spr	spr	60x60x32	8235	gfx0-ok
+level/gfx0/wthrhgru.spr	spr	60x60x32	8473	gfx0-ok
+level/gfx0/wthrow.spr	spr	60x60x32	6081	gfx0-ok
+level/gfx0/wthrowd.spr	spr	60x60x32	6245	gfx0-ok
+level/gfx0/wthrowu.spr	spr	60x60x32	6151	gfx0-ok
+level/gfx0/wthrpbm.spr	spr	60x60x32	8425	gfx0-ok
+level/gfx0/wthrpbmd.spr	spr	60x60x32	8438	gfx0-ok
+level/gfx0/wthrpbmu.spr	spr	60x60x32	8632	gfx0-ok
+level/gfx0/wtwang.spr	spr	60x60x49	6083	gfx0-ok
+level/gfx0/wtwangd.spr	spr	60x60x49	6075	gfx0-ok
+level/gfx0/wtwangu.spr	spr	60x60x49	6131	gfx0-ok
+level/gfx0/wulook.spr	spr	60x60x15	2041	gfx0-ok
+level/gfx0/wulookd.spr	spr	60x60x15	2136	gfx0-ok
+level/gfx0/wulooku.spr	spr	60x60x15	2142	gfx0-ok
+level/gfx0/wutllnk.spr	spr	60x60x8	1372	gfx0-ok
+level/gfx0/wutllnkd.spr	spr	60x60x8	1456	gfx0-ok
+level/gfx0/wutllnku.spr	spr	60x60x8	1346	gfx0-ok
+level/gfx0/wuzi.spr	spr	60x60x32	6225	gfx0-ok
+level/gfx0/wuzid.spr	spr	60x60x32	6185	gfx0-ok
+level/gfx0/wuzif.spr	spr	60x60x32	10092	gfx0-ok
+level/gfx0/wuzifd.spr	spr	60x60x32	10036	gfx0-ok
+level/gfx0/wuzifu.spr	spr	60x60x32	10290	gfx0-ok
+level/gfx0/wuzilnk.spr	spr	60x60x10	1590	gfx0-ok
+level/gfx0/wuzilnkd.spr	spr	60x60x10	1771	gfx0-ok
+level/gfx0/wuzilnku.spr	spr	60x60x10	1735	gfx0-ok
+level/gfx0/wuziu.spr	spr	60x60x32	6312	gfx0-ok
+level/gfx0/wvaslnk.spr	spr	60x60x10	2868	gfx0-ok
+level/gfx0/wvaslnkd.spr	spr	60x60x10	2946	gfx0-ok
+level/gfx0/wvaslnku.spr	spr	60x60x10	2974	gfx0-ok
+level/gfx0/wwalk.spr	spr	60x60x15	2938	gfx0-ok
+level/gfx0/wwalkd.spr	spr	60x60x15	3074	gfx0-ok
+level/gfx0/wwalku.spr	spr	60x60x15	3075	gfx0-ok
+level/gfx0/wwinner.spr	spr	60x60x14	4122	gfx0-ok
+level/gfx0/wwmn2lk.spr	spr	60x60x10	3505	gfx0-ok
+level/gfx0/wwmn2lkd.spr	spr	60x60x10	3573	gfx0-ok
+level/gfx0/wwmn2lku.spr	spr	60x60x10	3621	gfx0-ok
+level/gfx0/wwmnlnk.spr	spr	60x60x10	2885	gfx0-ok
+level/gfx0/wwmnlnkd.spr	spr	60x60x10	2948	gfx0-ok
+level/gfx0/wwmnlnku.spr	spr	60x60x10	3017	gfx0-ok
+level/gradient.img	img	8x916	826
+level/grass.img	img	136x42	436
+level/index.txt	-	-	354
+level/obj-alder.img	img	144x116	1225
+level/obj-alder.inf	-	-	19
+level/obj-aspen.img	img	172x140	1708
+level/obj-aspen.inf	-	-	19
+level/obj-bark.img	img	144x140	1668
+level/obj-bark.inf	-	-	19
+level/obj-birch.img	img	272x176	2815
+level/obj-birch.inf	-	-	19
+level/obj-bough.img	img	140x176	2470
+level/obj-bough.inf	-	-	19
+level/obj-bramble.img	img	256x308	5599
+level/obj-bramble.inf	-	-	19
+level/obj-branch.img	img	144x64	887
+level/obj-branch.inf	-	-	18
+level/obj-cedar.img	img	188x76	1114
+level/obj-cedar.inf	-	-	19
+level/obj-elm.img	img	144x124	1742
+level/obj-elm.inf	-	-	19
+level/obj-hazel.img	img	144x72	1002
+level/obj-hazel.inf	-	-	19
+level/obj-hedge.img	img	144x132	2212
+level/obj-hedge.inf	-	-	19
+level/obj-larch.img	img	216x140	1827
+level/obj-larch.inf	-	-	19
+level/obj-log.img	img	148x276	4126
+level/obj-log.inf	-	-	19
+level/obj-maple.img	img	256x108	2333
+level/obj-maple.inf	-	-	19
+level/obj-new_01.img	img	196x92	1704
+level/obj-new_01.inf	-	-	19
+level/obj-new_02.img	img	136x176	2567
+level/obj-new_02.inf	-	-	19
+level/obj-new_03.img	img	124x176	2438
+level/obj-new_03.inf	-	-	19
+level/obj-new_04.img	img	116x176	2370
+level/obj-new_04.inf	-	-	19
+level/obj-new_05.img	img	112x176	2307
+level/obj-new_05.inf	-	-	19
+level/obj-oak.img	img	144x160	2120
+level/obj-oak.inf	-	-	19
+level/obj-pine.img	img	144x96	1264
+level/obj-pine.inf	-	-	18
+level/obj-poplar.img	img	144x112	1061
+level/obj-poplar.inf	-	-	19
+level/obj-root.img	img	144x100	1160
+level/obj-root.inf	-	-	19
+level/obj-sapling.img	img	136x156	2032
+level/obj-sapling.inf	-	-	19
+level/obj-sprout.img	img	132x176	2318
+level/obj-sprout.inf	-	-	19
+level/obj-stump.img	img	256x188	3851
+level/obj-stump.inf	-	-	19
+level/obj-thicket.img	img	144x48	839
+level/obj-thicket.inf	-	-	19
+level/obj-trunk.img	img	144x76	1040
+level/obj-trunk.inf	-	-	19
+level/obj-twig.img	img	144x128	1559
+level/obj-twig.inf	-	-	19
+level/obj-vine.img	img	200x212	3834
+level/obj-vine.inf	-	-	19
+level/obj-willow.img	img	144x176	2635
+level/obj-willow.inf	-	-	19
+level/obj-yew.img	img	188x132	2161
+level/obj-yew.inf	-	-	19
+level/soil.img	img	256x256	741
+level/text.img	img	256x256	24551
+
+-- water.dir: 64 entries
+water/airmisl.spr	spr	60x60x1	389
+water/aquashp1.spr	spr	60x60x32	47669
+water/aquashp2.spr	spr	60x60x32	47005
+water/arrow.spr	spr	60x60x1	265
+water/banana.spr	spr	60x60x1	437
+water/bubble1.spr	spr	60x60x16	453
+water/bubble2.spr	spr	60x60x16	573
+water/bubble3.spr	spr	60x60x16	1069
+water/bubble4.spr	spr	60x60x16	1317
+water/bullet.spr	spr	60x60x32	14297
+water/carpet1.spr	spr	60x60x1	1193
+water/carpet2.spr	spr	60x60x1	713
+water/cluster.spr	spr	60x60x1	521
+water/clustlet.spr	spr	60x60x1	201
+water/cowwalk.spr	spr	60x60x10	11005
+water/donkey.spr	spr	158x246x1	19277
+water/donor.spr	spr	60x60x21	7433
+water/drill.spr	spr	60x60x5	1865
+water/dynamite.spr	spr	60x60x1	289
+water/fill.img	img	16x16	368
+water/grave1.spr	spr	60x60x20	13137
+water/grave2.spr	spr	60x60x20	15873
+water/grave3.spr	spr	60x60x20	12269
+water/grave4.spr	spr	60x60x20	12525
+water/grave5.spr	spr	60x60x20	15937
+water/grave6.spr	spr	60x60x20	13557
+water/grenade.spr	spr	60x60x1	389
+water/hgrenade.spr	spr	60x60x1	677
+water/hmissil1.spr	spr	60x60x32	23713
+water/hmissil2.spr	spr	60x60x32	23713
+water/layer/layer.spr	spr	256x48x160	1312760
+water/letter1.spr	spr	60x60x1	529
+water/letter2.spr	spr	60x60x1	529
+water/mbbomb.spr	spr	100x100x1	6401
+water/mcrate1.spr	spr	60x60x12	9821
+water/meteor.spr	spr	60x60x1	905
+water/mineoff.spr	spr	60x60x1	265
+water/mineon.spr	spr	60x60x1	265
+water/missile.spr	spr	60x60x1	401
+water/mole.spr	spr	40x40x33	22177
+water/mortar.spr	spr	60x60x1	505
+water/oildrum.spr	spr	90x90x10	14069
+water/petrolbm.spr	spr	60x60x1	437
+water/pigeonr0.spr	spr	60x60x4	1745
+water/pigeonr1.spr	spr	60x60x4	1325
+water/pigeonr2.spr	spr	60x60x4	1433
+water/pigeonr3.spr	spr	60x60x4	1797
+water/sally.spr	spr	60x60x10	14969
+water/sheep.spr	spr	60x60x10	10121
+water/sheepbrn.spr	spr	90x90x1	2381
+water/sheepfal.spr	spr	60x60x1	1385
+water/skunk.spr	spr	60x60x1	1097
+water/tamborin.spr	spr	60x60x1	617
+water/targets.spr	spr	60x60x20	23685
+water/targetw.spr	spr	60x60x10	14397
+water/ucrate1.spr	spr	60x60x20	11565
+water/vase.spr	spr	60x60x1	617
+water/vasebit1.spr	spr	80x80x1	637
+water/vasebit2.spr	spr	80x80x1	457
+water/vasebit3.spr	spr	80x80x1	457
+water/wcrate1.spr	spr	60x60x15	14137
+water/wdrown.spr	spr	60x60x10	6765
+water/wfdrown.spr	spr	60x60x1	637
+water/woman.spr	spr	60x60x10	10385

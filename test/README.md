@@ -28,6 +28,28 @@ diff -r "test/wa/decompressed" /tmp/out
 Silence means the decoder still reads that game the same way. All three
 reproduce byte for byte as committed.
 
+## Coral Reef
+
+`wa/Coral Reef/` is a whole shipped terrain -- `level.dir`, `text.img` and
+`water.dir` as the game installs them. It earns its place by being the most
+demanding one there is: 450 gfx0 sprite overrides, an animated `back2.spr` and
+`front.spr`, and a palette spent to the last colour.
+
+Decompressed it would be 228 MB of BMPs, nearly all of it pixels the archive
+already holds, so what is committed instead is `manifest.txt`: one line per
+entry giving its kind, geometry and size, and for every gfx0 override whether
+its colours stay inside the slot's fixed palette. All 450 do.
+
+```bash
+./test/make-manifest.sh
+git diff test
+```
+
+That last column is the one to watch. The game paints gfx0 from its own table
+and ignores the palette a sprite carries, so art that strays comes out
+recoloured -- and a decoder that reads those colours wrongly would show up
+here as a `gfx0-stray` where there was none.
+
 The three are not interchangeable. Aqua writes `LND\x1B` where the others
 write `LND\x1A`, its sprite bank is arranged differently, and Online Worms
 sits between the two -- so a change that looks right against one can still be
