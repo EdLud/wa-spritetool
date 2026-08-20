@@ -84,13 +84,14 @@ The output folder may not be the source folder — the archive would land among
 the art it was built from, where the next run would try to pack it. Leave the
 output off and a `<name> packed` folder is made beside the source.
 
-A terrain must bring its own **land texture** and **sky**: `text.png` and
-`gradient.png`, if these two files are not present, the command will refuse to work.
+The folder has to be called `build`. That is the whole test: everything a
+terrain needs can be stood in for, so there is no missing file that proves a
+folder is not one, and running `pack-terrain` over a directory of holiday
+photographs by accident is worth making hard.
 
-An **icon** is required too, but that one the tool will lend: `icon.png` at
-64x64, becoming `TEXT.img` beside `Level.dir`. Without one the game shows
-nothing for the terrain on its land generator screen.
- 
+Anything essential the folder has not got is offered from `presets/`, so a
+terrain can begin as one object and a name.
+
 
 - the **core assets** are found by their fixed names: `text.img`, `soil.img`,
   `grass.img`, `gradient.img`, `bridge.img`, `bridge-l.img`, `bridge-r.img`,
@@ -159,8 +160,8 @@ since the shipped terrains do break it.
 | `--no-recreate` | reuse an existing `.spr`/`.img` instead of rebuilding from BMP |
 | `--opaque-img` | treat images as having no transparent colour |
 | `--force` | write the archive even if it would not load |
-| `--defaults` | take a missing bridge or debris from the tool without asking |
-| `--no-defaults` | never take either |
+| `--defaults` | take anything missing from `presets/` without asking |
+| `--no-defaults` | never take any of it |
 | `--no-output-inf` | do not write object settings back into the folder |
 | `--write-palette` | draw the terrain's colours to `palette.png` |
 | `--read-palette` | fit every picture to the colours in `palette.png` |
@@ -237,13 +238,18 @@ tool says so, since the two can disagree.
 
 ### Defaults
 
-`presets/` beside the tool stands in for the pieces a folder has not
-got, so a terrain can begin as a texture, a sky and one object.
+`presets/` beside the tool stands in for the pieces a folder has not got, so
+a terrain can begin as one object.
 
-A terrain **must** have an icon and all three bridge pieces. The game draws a
-bridge whenever a map is generated with them, and shows the icon on its land
-generator screen. Both are offered from `presets/` and `pack-terrain` stops
-rather than write a terrain it knows the game will not take.
+A terrain **must** have a land texture, a sky, an icon and all three bridge
+pieces. The game draws a bridge whenever a map is generated with them, shows
+the icon on its land generator screen, and has nothing to draw the land or
+the sky with otherwise. All are offered from `presets/` and `pack-terrain`
+stops rather than write a terrain it knows the game will not take.
+
+The texture and sky are asked for plainly, because they are not a gap being
+filled -- they are what a terrain looks like, and borrowing them means it
+looks like the terrain they came from.
 
 A terrain **need not** have debris, whatever the guide says: one packs and
 plays without it, just with an emptier sky. So the default is offered and

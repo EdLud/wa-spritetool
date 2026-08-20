@@ -2026,6 +2026,10 @@ DEFAULT_DEBRIS = 'debris.spr'
 # goes beside Level.dir as TEXT.img. A terrain needs one, so it is offered
 # like the bridge and refused like it when declined.
 DEFAULT_ICON = 'logo.img'
+# The land texture and the sky. Offered rather than insisted on: a terrain
+# cannot go without either, but standing in for them is lending someone
+# else's look, so it is a question rather than something done quietly.
+DEFAULT_LOOK = ('text.img', 'gradient.img')
 # Filled in without asking. Both are blank, so no look is being imposed and
 # there is nothing to decide -- and the game does not treat them as optional:
 # with no grass.img its ApplyGrassFringe reads the grass through a pointer
@@ -2225,6 +2229,28 @@ def _fill_from_defaults(names: List[str], source_dir: str,
         lost = [s for s in silent if s not in stock]
         if lost:
             return names, borrowed, missing_note(', '.join(lost), lost)
+
+    # The look before the furniture: a terrain with no texture and no sky is
+    # the one case where the defaults decide what it looks like rather than
+    # filling a gap, so it is asked first and plainly.
+    look_missing = [n for n in DEFAULT_LOOK if n.lower() not in have]
+    if look_missing:
+        available = default_sources(DEFAULT_LOOK)
+        lost = [n for n in look_missing if n not in available]
+        if lost:
+            return names, borrowed, missing_note(', '.join(lost), lost)
+        stems = [n.split('.')[0] for n in look_missing]
+        lacks = ' and no '.join(stems)
+        wanted = ' and '.join(stems)
+        print(f'This terrain has no {lacks}. The tool can lend its own, but '
+              f'a texture and a sky are what a terrain looks like -- borrow '
+              f'them and it will look like the one they came from.')
+        if not ask(f'Use the default {wanted} and write it to {where}?',
+                   assume):
+            return names, borrowed, ('a terrain needs a land texture and a '
+                                     'sky; nothing else can stand in for '
+                                     'what it looks like')
+        take(look_missing)
 
     bridge_missing = [b for b in DEFAULT_BRIDGE if b.lower() not in have]
     if bridge_missing:
@@ -2446,28 +2472,26 @@ def _write_terrain_folder(source_dir: str, out_dir: str,
     return said
 
 
+BUILD_DIR_NAME = 'build'
+
+
 def _terrain_needs(folder: str) -> str:
-    """What a folder lacks before it can be called a terrain; '' when ready.
+    """Whether this folder is meant to be packed as a terrain; '' when it is.
 
-    A land texture and a sky are the two pieces nothing can stand in for: a
-    default would not be a placeholder, it would be someone else's terrain.
-    Everything else the tool can supply. Objects are wanted too, but they are
-    checked once the folder has been read, where the count is known.
+    The test is its name. Everything a terrain needs can now be stood in for,
+    so there is no asset whose absence proves the folder is not one -- and
+    running pack-terrain over some directory of pictures by accident is worth
+    making hard. A folder called build says the author meant it.
+
+    That is all the safety it has to carry. A build folder holding hundreds of
+    unrelated pictures still fails, further along, on the 32 objects a terrain
+    may have.
     """
-    present = {f.lower() for f in os.listdir(folder)
-               if os.path.isfile(os.path.join(folder, f))}
-
-    def has(stem: str) -> bool:
-        return any(f'{stem}{suffix}' in present
-                   for suffix in ('.img', '.img.bmp', '.img.png',
-                                  '.bmp', '.png'))
-
-    lacks = [n for n in ('text', 'gradient') if not has(n)]
-    if not lacks:
+    if os.path.basename(folder.rstrip(os.sep)).lower() == BUILD_DIR_NAME:
         return ''
-    return (f'no {" and no ".join(lacks)} here. A terrain needs a land '
-            f'texture (text.png) and a sky (gradient.png); the rest this '
-            f'tool can stand in for')
+    return (f'pack-terrain builds a folder called {BUILD_DIR_NAME}, and this '
+            f'one is called {os.path.basename(folder.rstrip(os.sep))!r}. '
+            f'Rename it, or use `pack` to build a .dir of anything else')
 
 
 def scan_archive(folder: str, subfolders: Optional[Sequence[str]] = None
@@ -3284,9 +3308,9 @@ def print_help():
     print("                                    --opaque-img       no transparent colour")
     print("                                    --force            write even if the")
     print("                                                       terrain would not load")
-    print("                                    --defaults         take a missing bridge")
-    print("                                                       or debris from the tool")
-    print("                                    --no-defaults      never take either")
+    print("                                    --defaults         take anything missing")
+    print("                                                       from presets/")
+    print("                                    --no-defaults      never take any of it")
     print("                                    --no-output-inf    do not write an")
     print("                                                       object's settings back")
     print("                                    --write-palette    draw the terrain's")
@@ -3723,9 +3747,7 @@ def main():
                 else:
                     missing = _terrain_needs(source_dir)
                     if missing:
-                        print(f"Not a terrain folder: {missing}")
-                        print("  (pack-terrain wants a land texture and a sky; "
-                              "use `pack` to build a .dir of anything else)")
+                        print(f"Not packing: {missing}.")
                         return 1
                     scanned = True
                     names, _objects, scan_notes = scan_terrain(source_dir)
