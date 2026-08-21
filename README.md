@@ -145,6 +145,8 @@ The defaults spend **none** of the 112-colour budget.
 MUST haves:
 
 - a land texture (`text.png`). Dimensions: 256 x 256 
+
+Default:
 ![landtexture](presets/text.img.png)
 - a soil texture (`soil.png`). Dimensions: 256 x 256 
 - a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide).
