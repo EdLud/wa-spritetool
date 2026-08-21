@@ -147,14 +147,24 @@ MUST haves:
 - a land texture (`text.png`). Dimensions: 256 x 256 
 
 Default:
+
 ![landtexture](presets/text.img.png)
 - a soil texture (`soil.png`). Dimensions: 256 x 256 
 - a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide).
+
+Default:
+
 ![grass](presets/grass.img.png)
 - a sky gradient (`gradient.png`). Dimensions: 8 x 916
 - 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height.
+
+Default:
+
 ![bridge-l](presets/bridge-l.img.png) ![bridge](presets/bridge.img.png) ![bridge-r](presets/bridge-r.img.png) 
 - an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
+
+Default:
+
 ![icon](presets/icon.img.png)
 
 - a soil texture (`soil.png`) Dimensions: 256 x 256
