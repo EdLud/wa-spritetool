@@ -140,6 +140,8 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 A terrain has a minimum set of requirements for it to load ingame. `pack-terrain` will refuse to pack a terrain
 unless all those files are present. If some files are missing, default files are offered to the user which will be 
 written into `/build`. 
+The defaults spend **none** of the 112-colour budget. ´
+
 
 MUST haves:
 
@@ -152,6 +154,14 @@ MUST haves:
 - a sky gradient (`gradient.png`). Dimensions: 8 x 916
 - 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height. 
 - an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
+
+
+additionally it CAN have:
+
+- a soil texture (`soil.png`) Dimensions: 256 x 256
+- a non-animated background layer (`back.png`) Dimensions: 640 x 160
+
+
 
 ### Build a terrain 5 - PNG Sources and recolouring
 
@@ -223,70 +233,8 @@ saying which was meant.
 the `.inf` will be prioritized. After pack-terrain both files will be gone and copied into
 `object_settings.txt`.
  
-### Defaults
-
-A terrain has a minimum set of requirements for it to load ingame, it MUST have:
-
-- a land texture (`text.png` or `text.img.png` or `text.bmp` or `text.img.bmp` (all files support these 4 naming conventions)). Dimensions: 256 x 256 
-- a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide). 
-
-- a sky gradient (`gradient.png`). Dimensions: 8 x 916
-- 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height. 
-- an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
-
-additionally it CAN have:
-
-- a soil texture (`soil.png`) Dimensions: 256 x 256
-- a non-animated background layer (`back.png`) Dimensions: 640 x 160
 
 
-`presets/` holds the default assets that will be offered to the user if they try to do
-
-
-A terrain **must** have a land texture, a sky, an icon and all three bridge
-pieces. The game draws a bridge whenever a map is generated with them, shows
-the icon on its land generator screen, and has nothing to draw the land or
-the sky with otherwise. All are offered from `presets/` and `pack-terrain`
-stops rather than write a terrain it knows the game will not take.
-
-The texture and sky are asked for plainly, because they are not a gap being
-filled -- they are what a terrain looks like, and borrowing them means it
-looks like the terrain they came from.
-
-A terrain **need not** have debris, whatever the guide says: one packs and
-plays without it, just with an emptier sky. So the default is offered and
-declining it carries on.
-
-Nor does it need a `back.spr`, and none is lent: 24 stock terrains have none,
-Coral Reef among them, and the sky shows through where a background would be.
-One that is supplied has to draw something, though -- the game crashes
-compositing a background with no colours in it, so an entirely transparent one
-is refused.
-
-`soil` and `grass` are filled in silently — both are blank, so there is no
-look being imposed and nothing to decide. A blank soil is what five shipped
-terrains do, and it shows the background through destroyed land rather than
-someone else's dirt.
-
-The defaults spend **none** of the 112-colour budget. It goes to the author's
-own art, and the defaults are then fitted to whatever palette that produces,
-however badly they come out — a bridge in the wrong colours is a prompt to draw
-one, where a texture reduced to make room for a bridge is a loss.
-
-Accepting copies the art into the terrain's own folder rather than reading it
-from the tool, so it is yours to edit and the next run picks up whatever you
-have made of it:
-
-```
-This terrain has 0 of the 3 bridge pieces; the game needs all three and will
-not load without them.
-Use the default bridge and write it to my-terrain? [y/N] y
-  copied bridge.img.png into my-terrain
-```
-
-Neither prompt appears when the folder already has the art, and an edited copy
-is never written over. If `presets/` is missing, `pack-terrain` says
-where to fetch it and keeps going where it can.
 
 ### Decode sprites and images
 
@@ -380,31 +328,10 @@ icons of 4 and of 20 colours both load and convert, while 17 does not -- so
 `pack` rounds an icon's palette up to a multiple of four, repeating a colour
 already in it.
 
-The count is of colours actually drawn. Colour 0 is the transparent background
-and is never stored, so an icon of 16 drawn colours has a 16-entry palette and
-is the "17 colours" the terrain guide asks for once transparency is counted.
-Reserving a palette slot for transparency instead makes it a real colour at
-pixel index 1, which both wastes the slot and, at 16 + 1 entries, is the count
-that crashes.
-
-Sprites are compressed, all of them. `back.spr` and `debris.spr` were held out
-for a while, because the stock terrains mostly store those two raw -- 115 of
-130 debris, 113 of 118 back. Mostly, not always: Coral Reef ships a compressed
-`debris.spr` at 400x400 by 160 frames and loads, and Distant Planet and
-Hildegard ship compressed backgrounds.
-
-Storing them raw was costly. Debris is nearly all transparent, so an
-uncompressed one is mostly padding: 18.1 MB where compression gives 275 KB of
-the same pixels. That single file put a terrain over the 10 MB that
-wkTerrainSync will transfer, so it could not be sent to another player at all.
-
-`--no-compress-spr` turns it off for every sprite if you want it.
-
 ## Extras
 
-`spritetool.py` packs a terrain; it does not draw one. [extras/](extras/) is a
-set of tools to experiment with animations -- each in its own folder, run with
-`--help`:
+[extras/](extras/) is a
+set of tools to experiment with animations -- each in its own folder
 
 ```bash
 python3 extras/make-grass-wind/make-grass-wind.py -o back2.spr.png
