@@ -140,25 +140,26 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 A terrain has a minimum set of requirements for it to load ingame. `pack-terrain` will refuse to pack a terrain
 unless all those files are present. If some files are missing, default files are offered to the user which will be 
 written into `/build`. 
-The defaults spend **none** of the 112-colour budget. ´
-
+The defaults spend **none** of the 112-colour budget.
 
 MUST haves:
 
 - a land texture (`text.png`). Dimensions: 256 x 256 
-
 ![landtexture](presets/text.img.png)
 - a soil texture (`soil.png`). Dimensions: 256 x 256 
 - a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide).
 ![grass](presets/grass.img.png)
 - a sky gradient (`gradient.png`). Dimensions: 8 x 916
-- 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height. 
+- 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height.
+![bridge-l](presets/bridge-l.img.png) ![bridge](presets/bridge.img.png) ![bridge-r](presets/bridge-r.img.png) 
 - an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
-
-
-additionally it CAN have:
+![icon](presets/icon.img.png)
 
 - a soil texture (`soil.png`) Dimensions: 256 x 256
+Default is an empty image.
+
+Additionally it CAN have
+
 - a non-animated background layer (`back.png`) Dimensions: 640 x 160
 
 
@@ -203,8 +204,19 @@ to all .png AND .bmp files
 written into the folder on the first run and read on every one after:
 
 ```
-// probability  1 to 10. Affects the chance of an object being placed...
-// where        2 = ceiling, 3 = floor, 0 or 1 = the side of the terrain
+// probability  1 to 10. Affects the chance of an object being placed, and is
+//              relative to the values of other objects. Smaller objects, or
+//              ones with a narrow base, typically have more places to appear.
+// front        Whether the object is in front or behind the terrain.
+//              0 = behind, 1 = in front
+// soil         Whether the soil texture appears when the object is
+//              destroyed. 0 = none, 1 = soil
+// collide      Enables or disables collision. 1 = enabled, 0 = disabled
+// nostack      Whether other objects can be placed onto this one.
+//              0 = yes, 1 = no
+// where        Where the object is placed. 2 = ceiling, 3 = floor, 0 or 1 =
+//              the side of the terrain, saying which side of the object is
+//              fixed to it, left (0) or right (1)
 
 floor1.png
 probability = 5
@@ -214,11 +226,6 @@ collide = 1
 nostack = 1
 where = 3
 ```
-
-The file opens with a comment describing all six settings, so what each does
-is where it is needed. A filename opens a block and its `key = value` lines
-follow; blank lines and `//` comments are ignored, and any key left out takes
-the guide's default. 
 
 Entries are written alphabetically and their order in `object_settings.txt`
 carries no meaning -- the terrain is packed alphabetically whatever the file says.
@@ -233,8 +240,6 @@ saying which was meant.
 the `.inf` will be prioritized. After pack-terrain both files will be gone and copied into
 `object_settings.txt`.
  
-
-
 
 ### Decode sprites and images
 
@@ -302,31 +307,6 @@ all read. Their differences are handled automatically: Online Worms names its
 sprites and images inside the file, and Aqua stores some of its graphics under
 a second compression that has no published description, documented in
 [AQUA_COMPRESSION.md](AQUA_COMPRESSION.md).
-
-### Icons and land textures
-
-Two different files share the name `text.img`: the 64x64 icon that sits beside
-`Level.dir`, and the 256x256 land texture packed inside it. The game is not
-consistent about which case it uses for either -- 36 of its themes spell the
-icon `TEXT.IMG` and 94 spell it `text.img` -- so this tool picks one and holds
-to it:
-
-| Name | Role | Size |
-|---|---|---|
-| `TEXT.img` | icon | 64x64 |
-| `text.img` | land texture | 256x256 |
-
-`pack` refuses an icon that is not 64x64, and says so when a `text.img` is
-64x64 or a `TEXT.img` turns up mis-cased, rather than leaving either to be
-found in the game.
-
-An icon also has to be aligned. Three bytes per palette entry put the pixel
-data on a 4-byte boundary only when the number of colours divides by four; at
-any other count a compressed icon is padded before its pixels, and the game
-crashes on the land generator screen. The count itself is not the constraint --
-icons of 4 and of 20 colours both load and convert, while 17 does not -- so
-`pack` rounds an icon's palette up to a multiple of four, repeating a colour
-already in it.
 
 ## Extras
 
