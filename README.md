@@ -1,10 +1,11 @@
 # spritetool
 
-Extracts and packs Worms Armageddon graphics archives (.dir) and decodes the sprites and images inside them to BMP and animated GIF.
+- Extracts Worms Armageddon graphics archives (.dir) and decodes the sprites and images inside them to BMP and animated GIF.
 
-Alongside it, [extras/](extras/) holds tools to experiment with animations:
+- Packs Terrains performing various checks to make sure the packed terrain is legitimate.
+
+[extras/](extras/) holds tools to experiment with animations:
 grass that sways, bubbles that rise, insects that mill about.
-
 
 The `.spr` sprite format has no public specification; it was reverse engineered
 for this tool and is documented in [SPR_FORMAT.md](SPR_FORMAT.md).
@@ -63,125 +64,127 @@ it is a sprite, any other picture is an image, and everything else rides along
 untouched — that is all a `.dir` is. Subfolders become the `hi\name.img` style
 entries the game's own archives use.
 
+## Build a terrain 0 - Preface
 
-### Build a terrain
+A terrain is a folder holding 2 or 3 files, stored under /Worms Armageddon/DATA/Levels/.
+
+The terrain "my-terrain" looks like this on the disk:
+
+```
+/Worms Armageddon/DATA/Levels/my-terrain/
+├── Level.dir       all the main assets of the terrain (object, non-object, sprite override)
+├── TEXT.img        from icon.png, which must be 64x64
+└── Water.dir       the water animation and drowining sprites, optional
+```
+
+If there are certain assets missing in Level.dir or if TEXT.IMG is malformed in some way, 
+the game will crash when loading the terrain. That's why our tool performs various checks
+on the assets and offers examplary defaults for the user to study.
+
+### Build a terrain 1 - The Command
 
 ```bash
-python3 wa_spritetool.py pack-terrain my-terrain/
-python3 wa_spritetool.py pack-terrain my-terrain/ output/
-```
-
-Everything `pack` does, plus everything that is needed to build a terrain that loads.
-
-```
-my-terrain packed/
-├── Level.dir
-├── TEXT.img        from icon.png, which must be 64x64
-└── Water.dir       copied through if the folder has one
+python3 wa_spritetool.py pack-terrain build/
+python3 wa_spritetool.py pack-terrain build/ output/
 ```
 
 The output folder may not be the source folder. Leave the
 output off and a `<name> packed` folder is made beside the source.
 
-The input folder has to be called `build`. 
+The input folder has to be called `build`.
 
-If a terrain is missing one or more assets that are required, defaults are offered.
-
-- the **core assets** are found by their fixed names: `text.img`, `soil.img`,
+- the **non-object assets** are found by their fixed names: `text.img`, `soil.img`,
   `grass.img`, `gradient.img`, `bridge.img`, `bridge-l.img`, `bridge-r.img`,
-  `back.spr`, `_back.spr`, `back2.spr`, `front.spr`, `debris.spr`
+  `back.spr`, `_back.spr`, `back2.spr`, `front.spr`, `debris.spr` (see further down)
 - a picture with a `.spd` beside it is a **sprite**; any other picture that is
-  not a core asset is an **object**, so objects can be named anything
+  not one of the above asset is treated as an **object**, so objects can be named anything
 - **sprite overrides** are read from a `gfx`, `gfx0` or `gfx1` subfolder
-- `index.txt` is generated into the archive, alphabetically. 
 
 `toaster.img.bmp` is the default WA spelling and works, but the `.img` is
-optional here: a plain `toaster.png` means the same thing, since an object is
-always an `.img` in the archive.
+optional here: a plain `toaster.bmp` means the same thing, since an object is
+always an `.img` in the archive. Possible forms are:
 
-An object's settings live in `object_settings.txt`, described below. One with
-no entry there takes the defaults (`5 0 0 1 1 3`).
+`toaster.png`
+`toaster.img.png`
+`toaster.img.bmp`
+`toaster.bmp`
 
-Both commands also take a `<name>.dir.txt` listing, and one inside a scanned
-folder takes precedence, for archives whose entry order matters:
+Should there be multiple occurances of the same object with different suffixes,
+the build will fail and report the error. For the rest of the readme we'll use the `.png`
+suffix.
+
+Both commands also take a optional `<name>.dir.txt` listing for backwards compability with spriteEditor.exe.
 
 ```bash
 python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 ```
 
-Sprites and images are rebuilt from their `.bmp` or `.png` (plus `.spd` for
-sprite metadata, which is required). Anything else is copied through unchanged.
-
-### PNG sources
-
-A `.png` may stand in for the indexed `.bmp` anywhere, so art need not be
-indexed by hand first. The game has one transparent colour rather than an
-alpha channel, so converting one is lossy in two ways and both are reported:
-
-- alpha is **thresholded at 128** -- at or above it a pixel is drawn, below it
-  the pixel becomes index 0, the transparent one
-- colours are reduced by median cut, and the mean distance they moved is
-  printed, out of the 441 that spans the RGB cube
-
-The reduction is done **once for the whole terrain**, not per picture. The game
-aggregates every picture's palette into one table and the guide caps it at 112
-colours, warning that a terrain past it will not load -- and thirty-two
-pictures of a hundred colours each come to far more than a hundred together.
-So `pack-terrain` reads all the art first, cuts one palette across it, and
-maps every PNG onto that. Already-indexed sources are packed exactly as
-authored and their colours counted against the budget, leaving the rest for
-the PNGs.
-
-The `gfx0`/`gfx1` overrides do not count towards it: those replace what the
-game would otherwise take from `Gfx.dir`, so they are not the terrain's own
-art. Under that rule the median across a stock install is exactly 112.
-
-A terrain already inside the budget converts losslessly. Where both a `.bmp`
-and a `.png` exist the `.bmp` wins, being already indexed and so authored
-exactly.
-
 | Flag | Effect |
 |---|---|
 | `--no-compress-img` | store images uncompressed |
-| `--no-recreate` | reuse an existing `.spr`/`.img` instead of rebuilding from BMP |
+| `--no-recreate` | reuse an existing `.spr`/`.img`* instead of rebuilding from BMP |
 | `--opaque-img` | treat images as having no transparent colour |
 | `--force` | write the archive even if it would not load |
-| `--defaults` | take anything missing from `presets/` without asking |
+| `--defaults` | take anything missing from `presets/`** without asking |
 | `--no-defaults` | never take any of it |
 | `--no-output-inf` | do not write object settings back into the folder |
 | `--write-palette` | draw the terrain's colours to `palette.png` |
 | `--read-palette` | fit every picture to the colours in `palette.png` |
 | `--no-palette` | cut no shared palette; each picture keeps its own |
 
-`--write-palette` puts a `palette.png` in the source folder, the terrain's
-colours as a grid of swatches, and says how many of the 112 are spent. It is
-read back out of the finished archive rather than from the plan that made it,
-so a terrain of already-indexed art -- which needs no plan -- draws one too.
-Squares past the last colour are left transparent, so what is counted and what
-is drawn agree.
+*  - see `the spd format - sprite configuration `
+**  - see further down
+
+### Build a terrain 2 - Core Assets, Optional Assets, Defaults
+
+A terrain has a minimum set of requirements for it to load ingame. `pack-terrain` will refuse to pack a terrain
+unless all those files are present. If some files are missing, default files are offered to the user which will be 
+written into `/build`. 
+
+MUST haves:
+
+- a land texture (`text.png`). Dimensions: 256 x 256 
+![landtexture](presets/text.img.png)
+- a soil texture (`soil.png`). Dimensions: 256 x 256 
+- a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide).
+![grass](presets/grass.img.png)
+- a sky gradient (`gradient.png`). Dimensions: 8 x 916
+- 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height. 
+- an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
+
+### Build a terrain 5 - PNG Sources and recolouring
+
+A `.png` may stand in for the indexed `.bmp` anywhere, so art need not be
+indexed by hand first, although this is still the recommended approach. 
+
+The converting of a non-indexed `.png` to the indexed `.bmp` works like following:
+
+- alpha is **thresholded at 128** -- at or above it a pixel is drawn, below it
+  the pixel becomes index 0, the transparent one
+- colours are reduced by median cut, and the mean distance they moved is
+  printed, out of the 441 that spans the RGB cube
+
+The reduction is done **once for the whole terrain**, not per picture. 
+`pack-terrain` reads all the art first, cuts one palette across it, and
+maps every PNG onto that. Already-indexed sources are packed exactly as
+authored and their colours counted against the budget, leaving the rest for
+the PNGs.
+
+A terrain already inside the budget converts losslessly. Where both a `.bmp`
+and a `.png` exist the `.bmp` wins, being already indexed and so authored
+exactly.
+
+`--write-palette` puts a `palette.png` in the build folder, the terrain's
+colours as a grid of swatches, and says how many of the 112 are spent. 
 
 `--no-palette` skips the shared cut entirely. Each picture keeps the colours
 it was authored with, and an indexed source is packed exactly as it stands --
 for an author who has already fitted their art to a palette they chose and
-does not want it nudged to make room for the rest of the terrain.
+does not want it nudged to make room for the rest of the terrain. A terrain 
+packed with this option may hold more than 112 colours.
 
-The 112 then becomes theirs to stay inside. Nothing enforces it here, but the
-count after packing says what the total came to: Entomology's PNGs cut to 112
-together, and 4256 apart. A PNG drawing more colours than an `.img` can hold
-is still reduced, since that is the format's limit rather than a choice this
-flag can waive; the difference is that the reduction looks at one picture
-instead of all of them.
-
-`--read-palette` takes that file back and fits every picture to it, instead of
-cutting a palette from the art. Edit the swatches, or hand over a palette of
-your own -- any picture will do, its colours read in the order they are met.
-Unlike the cut, this applies to already-indexed sources as well: a palette
-given outright is meant to be the whole of the terrain's colours, so a `.bmp`
-is fitted to it like everything else, and the shift is reported per picture.
-
-Writing then reading gives back the same colour set, though not quite the same
-archive: the cut weighs each colour by how often a picture uses it, where the
-sheet is a flat list, so a few pixels land on a different near-neighbour.
+`--read-palette` reads from `build/palette.png` and applies the colour 
+to all .png AND .bmp files
 
 ### Object settings
 
@@ -204,28 +207,40 @@ where = 3
 The file opens with a comment describing all six settings, so what each does
 is where it is needed. A filename opens a block and its `key = value` lines
 follow; blank lines and `//` comments are ignored, and any key left out takes
-the guide's default. `where` is the one to
-reach for: `3` puts an object on the floor, `2` on the ceiling, `0` or `1` on
-the left or right wall. Each key holds the number the format holds, so
-`collide = 1` enables collision exactly as the guide describes it.
+the guide's default. 
 
-Entries are written alphabetically and their order carries no meaning -- the
-terrain is packed alphabetically whatever the file says.
+Entries are written alphabetically and their order in `object_settings.txt`
+carries no meaning -- the terrain is packed alphabetically whatever the file says.
 
-The format itself keeps these in a `.inf` beside every object, and the archive
-still holds them that way. If a folder has those, `pack-terrain` offers to
-move them into `object_settings.txt` and delete them; declining stops the
-build rather than leave the settings in two places. A loose file setting what
+If an object has a `.inf` file beside it holding it's settings , `pack-terrain` offers to
+move the content into `object_settings.txt` and delete them; declining stops the
+build rather than leave the settings in two places. A loose `.inf` file setting what
 `object_settings.txt` already sets is refused outright, since there is no
 saying which was meant.
 
-Where an object has both a `.inf` and a `.txt`, the `.inf` is packed and the
-tool says so, since the two can disagree.
-
+`objectname.inf` and `objectname.txt` are both possible, if they are both present,
+the `.inf` will be prioritized. After pack-terrain both files will be gone and copied into
+`object_settings.txt`.
+ 
 ### Defaults
 
-`presets/` beside the tool stands in for the pieces a folder has not got, so
-a terrain can begin as one object.
+A terrain has a minimum set of requirements for it to load ingame, it MUST have:
+
+- a land texture (`text.png` or `text.img.png` or `text.bmp` or `text.img.bmp` (all files support these 4 naming conventions)). Dimensions: 256 x 256 
+- a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide). 
+
+- a sky gradient (`gradient.png`). Dimensions: 8 x 916
+- 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height. 
+- an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
+
+additionally it CAN have:
+
+- a soil texture (`soil.png`) Dimensions: 256 x 256
+- a non-animated background layer (`back.png`) Dimensions: 640 x 160
+
+
+`presets/` holds the default assets that will be offered to the user if they try to do
+
 
 A terrain **must** have a land texture, a sky, an icon and all three bridge
 pieces. The game draws a bridge whenever a map is generated with them, shows
