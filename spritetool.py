@@ -1306,13 +1306,36 @@ def png_colour_counts(data: bytes,
                       ) -> Dict[Tuple[int, int, int], int]:
     """How often each drawn colour occurs in a PNG."""
     from io import BytesIO
-    raw = Image.open(BytesIO(data)).convert('RGBA').tobytes()
+    src = Image.open(BytesIO(data)).convert('RGBA')
+    if np is not None:
+        return _counts_numpy(np.asarray(src), alpha_threshold)
+    raw = src.tobytes()
     counts: Dict[Tuple[int, int, int], int] = {}
     for o in range(0, len(raw), 4):
         if raw[o + 3] >= alpha_threshold:
             key = (raw[o], raw[o + 1], raw[o + 2])
             counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def _counts_numpy(arr, alpha_threshold: int
+                  ) -> Dict[Tuple[int, int, int], int]:
+    """Colour histogram of an RGBA array, counting only drawn pixels.
+
+    Packing each colour into one 24-bit integer turns the count into a single
+    pass of np.unique, where the loop above is three attribute lookups and a
+    dict update per pixel -- a photograph has twenty million of them.
+    """
+    flat = arr.reshape(-1, 4)
+    drawn = flat[flat[:, 3] >= alpha_threshold]
+    if not len(drawn):
+        return {}
+    keys = (drawn[:, 0].astype(np.uint32) << 16 |
+            drawn[:, 1].astype(np.uint32) << 8 |
+            drawn[:, 2].astype(np.uint32))
+    uniq, freq = np.unique(keys, return_counts=True)
+    return {(int(k >> 16), int((k >> 8) & 0xFF), int(k & 0xFF)): int(n)
+            for k, n in zip(uniq, freq)}
 
 
 def cut_palette(counts: Dict[Tuple[int, int, int], int],
@@ -1399,14 +1422,20 @@ def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
     raw = src.tobytes()                     # RGBA, row-major, top-down
 
     npix = width * height
-    drawn = bytearray(npix)
-    counts: Dict[Tuple[int, int, int], int] = {}
-    for i in range(npix):
-        o = i * 4
-        if raw[o + 3] >= alpha_threshold:
-            drawn[i] = 1
-            key = (raw[o], raw[o + 1], raw[o + 2])
-            counts[key] = counts.get(key, 0) + 1
+    arr = np.asarray(src) if np is not None else None
+    if arr is not None:
+        mask = arr.reshape(-1, 4)[:, 3] >= alpha_threshold
+        counts = _counts_numpy(arr, alpha_threshold)
+        drawn = None
+    else:
+        drawn = bytearray(npix)
+        counts = {}
+        for i in range(npix):
+            o = i * 4
+            if raw[o + 3] >= alpha_threshold:
+                drawn[i] = 1
+                key = (raw[o], raw[o + 1], raw[o + 2])
+                counts[key] = counts.get(key, 0) + 1
     ndrawn = sum(counts.values())
     if not ndrawn:
         # Legal, and shipped: Coral Reef's soil.img is entirely transparent.
@@ -1434,11 +1463,31 @@ def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
     # them.
     index_of, error_sum = _map_to_palette(counts, chosen)
 
-    pixels = bytearray(npix)
-    for i in range(npix):
-        if drawn[i]:
-            o = i * 4
-            pixels[i] = index_of[(raw[o], raw[o + 1], raw[o + 2])]
+    if arr is not None:
+        # One lookup table over the 16.7 million possible colours would be
+        # wasteful; instead the drawn colours are packed to 24-bit keys, the
+        # keys sorted once, and every pixel found by binary search. That is
+        # numpy's searchsorted over the whole picture rather than a dict
+        # lookup per pixel.
+        flat = arr.reshape(-1, 4)
+        keys = (flat[:, 0].astype(np.uint32) << 16 |
+                flat[:, 1].astype(np.uint32) << 8 |
+                flat[:, 2].astype(np.uint32))
+        known = np.array([r << 16 | g << 8 | b for r, g, b in index_of],
+                         dtype=np.uint32)
+        vals = np.array([index_of[c] for c in index_of], dtype=np.uint8)
+        order = np.argsort(known)
+        known, vals = known[order], vals[order]
+        idx = np.searchsorted(known, keys)
+        np.clip(idx, 0, len(known) - 1, out=idx)
+        out = np.where(mask, vals[idx], 0).astype(np.uint8)
+        pixels = bytearray(out.tobytes())
+    else:
+        pixels = bytearray(npix)
+        for i in range(npix):
+            if drawn[i]:
+                o = i * 4
+                pixels[i] = index_of[(raw[o], raw[o + 1], raw[o + 2])]
 
     mean_error = error_sum / ndrawn
     if mean_error:
