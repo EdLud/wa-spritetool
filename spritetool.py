@@ -1594,16 +1594,47 @@ _PARALLEL_MIN_STREAMS = 8
 _PARALLEL_MIN_BYTES = 1 << 20
 
 
+# Below this many entries the pack is quicker in one process than it is
+# shipping the work out and waiting for it back.
+_PARALLEL_MIN_ENTRIES = 12
+
+
+def _pack_entry_safe(plan):
+    """Pack one entry in another process, capturing what it would print.
+
+    _pack_entry writes its notes to stderr as it goes. Left alone in a worker
+    those arrive interleaved with every other entry's, so they are caught here
+    and handed back to be printed in the order the entries are added.
+    """
+    import io
+    import contextlib
+    # This runs inside the entry pool, and _compress_all will start another
+    # for a big sprite's streams -- eight workers each forking eight more.
+    # That is deliberate. A terrain's time is spent in its two or three
+    # largest sprites (Coral Reef's front.spr and back2.spr are 2 MB each),
+    # and those are one entry apiece, so entry-level work alone leaves them
+    # serial and the pack waits on them. Three runs each: inner pool off
+    # 25.1s, held to two workers 18.0s, left alone 15.5s.
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            data = _pack_entry(*plan)
+        return ('ok', data, buf.getvalue().splitlines())
+    except Exception as exc:                     # noqa: BLE001 -- reported
+        return ('error', str(exc), buf.getvalue().splitlines())
+
+
 def _compress_all(streams: Sequence[bytes]) -> List[bytes]:
     """Compress every stream, using more than one core where it pays."""
     blobs = [bytes(b) for b in streams]
     total = sum(len(b) for b in blobs)
-    if (len(blobs) < _PARALLEL_MIN_STREAMS or total < _PARALLEL_MIN_BYTES):
+    if (len(blobs) < _PARALLEL_MIN_STREAMS
+            or total < _PARALLEL_MIN_BYTES):
         return [Team17Compressor.compress(b) for b in blobs]
     try:
         from concurrent.futures import ProcessPoolExecutor
         import os as _os
-        workers = min(len(blobs), (_os.cpu_count() or 1))
+        workers = min(len(blobs), _os.cpu_count() or 1)
         if workers < 2:
             raise RuntimeError('one core')
         with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -4079,17 +4110,9 @@ def main():
             for note in palette_notes:
                 print(f'  note: {note}', file=sys.stderr)
 
-        for name in names:
-            if name in synthetic:
-                payload = synthetic[name]
-                for note in entry_notes(name, payload):
-                    print(f'  note: {note}', file=sys.stderr)
-                writer.add(name, payload)
-                packed[name] = payload
-                built += 1
-                continue
+        def _plan(name: str):
+            """What packing one entry needs, worked out before any of it runs."""
             rel = name.replace('\\', os.sep)
-            base = os.path.join(source_dir, rel)
             # A gfx0/gfx1 override is painted with the slot's own fixed table,
             # not with the terrain's palette and not with the one in its own
             # header, so it has to be fitted to that table instead. Forced,
@@ -4100,17 +4123,53 @@ def main():
             if slot is not None:
                 entry_palette = list(slot)
                 force_this = True
+            return (os.path.join(source_dir, rel), name, recreate,
+                    compress_spr, compress_img, opaque, entry_palette,
+                    extra.get(name), force_this)
+
+        todo = [n for n in names if n not in synthetic]
+        results: Dict[str, object] = {}
+        # Entries do not depend on each other, so they can be built at once --
+        # but they have to be ADDED in the order names gives, since that is
+        # the archive's own order and a listing may have fixed it deliberately.
+        if len(todo) >= _PARALLEL_MIN_ENTRIES:
             try:
-                data = _pack_entry(base, name, recreate, compress_spr,
-                                   compress_img, opaque, entry_palette,
-                                   extra.get(name), force_this)
-            except Exception as exc:
-                problems.append(f"{name}: {exc}")
+                from concurrent.futures import ProcessPoolExecutor
+                workers = min(len(todo), (os.cpu_count() or 1))
+                if workers < 2:
+                    raise RuntimeError('one core')
+                with ProcessPoolExecutor(max_workers=workers) as pool:
+                    for name, outcome in zip(todo, pool.map(
+                            _pack_entry_safe, [_plan(n) for n in todo],
+                            chunksize=1)):
+                        results[name] = outcome
+            except Exception:
+                results = {}
+        for name in names:
+            if name in synthetic:
+                payload = synthetic[name]
+                for note in entry_notes(name, payload):
+                    print(f'  note: {note}', file=sys.stderr)
+                writer.add(name, payload)
+                packed[name] = payload
+                built += 1
                 continue
-            if data is None:
+            outcome = results.get(name)
+            if outcome is None:
+                try:
+                    outcome = ('ok', _pack_entry(*_plan(name)), [])
+                except Exception as exc:
+                    outcome = ('error', str(exc), [])
+            kind, value, notes_out = outcome
+            for note in notes_out:
+                print(note, file=sys.stderr)
+            if kind == 'error':
+                problems.append(f"{name}: {value}")
+                continue
+            if value is None:
                 problems.append(f"{name}: no source file found")
                 continue
-            payload, was_built = data
+            payload, was_built = value
             for note in entry_notes(name, payload):
                 print(f'  note: {note}', file=sys.stderr)
             writer.add(name, payload)
