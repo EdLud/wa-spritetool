@@ -1586,6 +1586,38 @@ def build_palette(pixels: bytes, source_palette: bytes) -> Tuple[bytes, bytes]:
     return bytes(palette), pixels.translate(bytes(table))
 
 
+# Compression is where the time goes: three quarters of packing a terrain, and
+# a stream at a time. They are independent, so they can be done at once -- but
+# only worth the cost of shipping them to another process when there is real
+# work to divide. Below the threshold the overhead is larger than the saving.
+_PARALLEL_MIN_STREAMS = 8
+_PARALLEL_MIN_BYTES = 1 << 20
+
+
+def _compress_all(streams: Sequence[bytes]) -> List[bytes]:
+    """Compress every stream, using more than one core where it pays."""
+    blobs = [bytes(b) for b in streams]
+    total = sum(len(b) for b in blobs)
+    if (len(blobs) < _PARALLEL_MIN_STREAMS or total < _PARALLEL_MIN_BYTES):
+        return [Team17Compressor.compress(b) for b in blobs]
+    try:
+        from concurrent.futures import ProcessPoolExecutor
+        import os as _os
+        workers = min(len(blobs), (_os.cpu_count() or 1))
+        if workers < 2:
+            raise RuntimeError('one core')
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            # Order matters: a stream's position is derived from the lengths
+            # of the ones before it, so the results have to come back in the
+            # order they went out. map does that; as_completed would not.
+            return list(pool.map(Team17Compressor.compress, blobs,
+                                 chunksize=1))
+    except Exception:
+        # A machine that cannot fork, a frozen build, an import that is not
+        # picklable -- none of it is worth failing a pack over.
+        return [Team17Compressor.compress(b) for b in blobs]
+
+
 def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
                   palette: bytes, flags: int, framerate: int,
                   compress: bool = True) -> bytes:
@@ -1669,7 +1701,7 @@ def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
 
     body = bytearray()
     if compress:
-        encoded = [Team17Compressor.compress(bytes(b)) for b in streams]
+        encoded = _compress_all(streams)
         body += struct.pack('<I', len(streams))
         body += b'\x00' * (ncol % 4)               # align the stream table
         # Two record layouts, selected by ncol % 4 alone -- see SpriteFile.
