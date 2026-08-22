@@ -2386,11 +2386,13 @@ def _fill_from_defaults(names: List[str], source_dir: str,
             continue
         take(gone)
         if DEFAULT_ICON in gone:
-            dest = os.path.join(source_dir, 'icon.img.png')
+            # icon.png, matching the presets: the .img infix is SpriteEditor's
+            # spelling and is still read, but nothing this tool writes uses it.
+            dest = os.path.join(source_dir, 'icon.png')
             if not os.path.exists(dest):
                 import shutil
                 shutil.copyfile(available[DEFAULT_ICON], dest)
-                print(f'  copied icon.img.png into {where}', file=sys.stderr)
+                print(f'  copied icon.png into {where}', file=sys.stderr)
     return names, borrowed, ''
 
 

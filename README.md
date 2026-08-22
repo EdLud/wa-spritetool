@@ -170,7 +170,7 @@ Default:
 
 Default:
 
-![bridge-l](presets/bridge-l.img.png) ![bridge](presets/bridge.png) ![bridge-r](presets/bridge-r.img.png) 
+![bridge-l](presets/bridge-l.png) ![bridge](presets/bridge.png) ![bridge-r](presets/bridge-r.png) 
 - an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
 
 Default:
