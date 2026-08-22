@@ -128,6 +128,7 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 | `--force` | write the archive even if it would not load |
 | `--defaults` | take anything missing from `presets/`** without asking |
 | `--no-defaults` | never take any of it |
+| `--offer-defaults` | ask about missing art again on a folder already packed |
 | `--no-output-inf` | do not write object settings back into the folder |
 | `--write-palette` | draw the terrain's colours to `palette.png` |
 | `--read-palette` | fit every picture to the colours in `palette.png` |
@@ -148,8 +149,8 @@ declining a required piece stops the build, declining an optional one carries
 on without it. `settings.spritetool` is then written into the folder, and
 nothing is offered again: a piece missing on a later run was deleted on
 purpose rather than overlooked. The required ones are still checked every run,
-since the game will not open the terrain without them. Delete
-`settings.spritetool` to be asked about everything once more.
+since the game will not open the terrain without them. Pass `--offer-defaults`
+to be asked about everything once more.
 
 MUST haves:
 

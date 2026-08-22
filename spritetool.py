@@ -2267,7 +2267,7 @@ def write_settings(folder: str, values: Dict[str, str]) -> None:
     lines = ['// Written by spritetool the first time this folder was packed.',
              '// Its presence is what stops the defaults being offered again:',
              '// a piece missing now was deleted on purpose, not overlooked.',
-             '// Delete this file to be asked about everything once more.',
+             '// Pass --offer-defaults to be asked about everything once more.',
              '']
     for key in sorted(values):
         lines.append(f'{key} = {values[key]}')
@@ -2331,7 +2331,7 @@ def _fill_from_defaults(names: List[str], source_dir: str,
             return names, borrowed, (
                 f'no {pretty}. A terrain needs it, and this folder has been '
                 f'packed before, so nothing is offered -- put it back, or '
-                f'delete {SETTINGS_FILE} to be asked again')
+                f'pass --offer-defaults to be asked again')
         return names, borrowed, ''
 
     # The blank ones, without asking: there is no look to choose between, and
@@ -3427,6 +3427,9 @@ def print_help():
     print("                                    --defaults         take anything missing")
     print("                                                       from presets/")
     print("                                    --no-defaults      never take any of it")
+    print("                                    --offer-defaults   ask about missing art")
+    print("                                                       again on a folder")
+    print("                                                       already packed once")
     print("                                    --no-output-inf    do not write an")
     print("                                                       object's settings back")
     print("                                    --write-palette    draw the terrain's")
@@ -3786,7 +3789,8 @@ def main():
         known = {'--no-compress-spr', '--no-compress-img',
                  '--no-recreate', '--opaque-img', '--force',
                  '--defaults', '--no-defaults', '--no-output-inf',
-                 '--write-palette', '--read-palette', '--no-palette'}
+                 '--write-palette', '--read-palette', '--no-palette',
+                 '--offer-defaults'}
         unknown = [o for o in opts if o not in known]
         if unknown:
             print(f"Error: unknown option(s): {', '.join(unknown)}")
@@ -3804,6 +3808,11 @@ def main():
         write_palette = '--write-palette' in opts
         read_palette = '--read-palette' in opts
         no_palette = '--no-palette' in opts
+        # Ask about the defaults again on a folder that has already been
+        # packed. The settings file is what normally silences them, and it is
+        # meant to accumulate real settings, so it should not have to be
+        # deleted to get one question re-asked.
+        offer_defaults = '--offer-defaults' in opts
         if no_palette and read_palette:
             print("Error: --no-palette and --read-palette ask for opposite "
                   "things. One leaves the colours alone; the other fits every "
@@ -3884,10 +3893,12 @@ def main():
                     for stem, values in obj_settings.items():
                         synthetic[f'{stem}.inf'] = format_inf(values)
                     settings = read_settings(source_dir)
-                    first_run = settings is None
+                    first_run = settings is None or offer_defaults
                     if first_run:
-                        print(f"  first run: offering what "
-                              f"{DEFAULTS_DIR} has for anything missing")
+                        why = ('asked for' if settings is not None
+                               else 'first run')
+                        print(f"  {why}: offering what {DEFAULTS_DIR} has "
+                              f"for anything missing")
                     names, borrowed, refused = _fill_from_defaults(
                         names, source_dir, assume_defaults, first_run)
                     if refused:
