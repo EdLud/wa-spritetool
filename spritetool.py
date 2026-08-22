@@ -2060,18 +2060,14 @@ DEFAULT_LOOK = ('text.img', 'gradient.img')
 # deleted on purpose, and asking again would talk them back into art they
 # already turned down.
 SETTINGS_FILE = 'settings.spritetool'
-# What the game will not open without. Everything else is offered once and
-# never mentioned again.
-REQUIRED_ASSETS = DEFAULT_LOOK + DEFAULT_BRIDGE + (DEFAULT_ICON,)
-# Filled in without asking. Both are blank, so no look is being imposed and
-# there is nothing to decide -- and the game does not treat them as optional:
-# with no grass.img its ApplyGrassFringe reads the grass through a pointer
-# that was never set and dies on the spot.
+# The ground: what destroyed land shows underneath, and the fringe along its
+# edge. Both are asked for like everything else -- the shipped defaults are
+# blank, so taking them imposes no look, but they are the author's to refuse
+# and the refusal has to mean something.
 #
-# back.spr is not among them. A terrain plays perfectly well without one --
-# 24 in a stock install have none, Coral Reef among them -- and standing in
-# with a blank would only give the game something to draw where it would
-# otherwise draw the sky.
+# Required, not optional. All 145 shipped terrains carry both, and the game
+# does not treat grass as optional at all: with none, ApplyGrassFringe reads
+# it through a pointer that was never set and dies on the spot.
 DEFAULT_SILENT = ('soil.img', 'grass.img')
 # The parallax layers. All optional -- a terrain plays with none of them, and
 # 24 stock ones ship no back.spr at all -- so each is offered once and taken
@@ -2081,6 +2077,11 @@ DEFAULT_SILENT = ('soil.img', 'grass.img')
 # loader, so lending _back is lending the one that can be compressed. It
 # overrides back.spr where a terrain has both.
 DEFAULT_LAYERS = ('_back.spr', 'back2.spr', 'front.spr')
+
+# What the game will not open without. Everything else is offered once and
+# never mentioned again.
+REQUIRED_ASSETS = (DEFAULT_LOOK + DEFAULT_SILENT + DEFAULT_BRIDGE
+                   + (DEFAULT_ICON,))
 REPO_URL = 'https://github.com/EdLud/wa-spritetool'
 
 
@@ -2338,18 +2339,6 @@ def _fill_from_defaults(names: List[str], source_dir: str,
                 f'pass --offer-defaults to be asked again')
         return names, borrowed, ''
 
-    # The blank ones, without asking: there is no look to choose between, and
-    # a terrain without grass crashes the game outright.
-    silent = [s for s in DEFAULT_SILENT if lacking(s)]
-    if silent:
-        stock = default_sources(silent)
-        got = [s for s in silent if s in stock]
-        if got:
-            take(got)
-        lost = [s for s in silent if s not in stock]
-        if lost:
-            return names, borrowed, missing_note(', '.join(lost), lost)
-
     # Everything else one at a time, so each is a decision of its own rather
     # than one answer standing for several pieces.
     offers = (
@@ -2357,6 +2346,10 @@ def _fill_from_defaults(names: List[str], source_dir: str,
          'the land texture, which every piece of ground is tiled from'),
         (DEFAULT_LOOK[1], True,
          'the sky behind the map'),
+        (DEFAULT_SILENT[0], True,
+         'what shows underneath when the land is blown away'),
+        (DEFAULT_SILENT[1], True,
+         'the fringe drawn along the top edge of the land'),
         (DEFAULT_BRIDGE, True,
          'the bridge, which the game draws whenever a map is generated '
          'with one'),
