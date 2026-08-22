@@ -2076,7 +2076,11 @@ DEFAULT_SILENT = ('soil.img', 'grass.img')
 # The parallax layers. All optional -- a terrain plays with none of them, and
 # 24 stock ones ship no back.spr at all -- so each is offered once and taken
 # or not. back.spr and _back.spr hold a single frame; back2 and front animate.
-DEFAULT_LAYERS = ('back.spr', 'back2.spr', 'front.spr')
+# _back.spr rather than back.spr: the two draw the same backdrop, but back.spr
+# goes into video memory uncompressed while _back.spr goes through the sprite
+# loader, so lending _back is lending the one that can be compressed. It
+# overrides back.spr where a terrain has both.
+DEFAULT_LAYERS = ('_back.spr', 'back2.spr', 'front.spr')
 REPO_URL = 'https://github.com/EdLud/wa-spritetool'
 
 
@@ -2905,6 +2909,11 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
     # shipped terrains: back.spr 118 files and _back.spr 47, every one of them
     # a single frame, where back2.spr animates in 9 of 40 and front.spr in all
     # 3. So an animated backdrop belongs in back2 or front.
+    if lower.get('back.spr') and lower.get('_back.spr'):
+        notes.append(
+            'both back.spr and _back.spr are here; the game draws _back.spr '
+            'and ignores back.spr, so the other one is dead weight')
+
     for name in ('back.spr', '_back.spr'):
         entry = lower.get(name)
         if entry is None:
@@ -3396,7 +3405,21 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
     # streams. A dense 400x400 frame holds ~120,000 and overflows MAX_DATA_POS
     # alone, taking a stream to itself; 160 of those need 160 streams and the
     # game cannot load them. encode_sprite refuses that case.
-    compress_this = compress_spr
+    # back.spr is the exception, and it was proved the hard way. The game
+    # loads it straight into video memory rather than through the sprite
+    # loader, and a compressed one crashes: a terrain whose every sprite was
+    # compressed failed, and the same terrain with only back.spr left raw
+    # loaded. back2.spr, front.spr and debris.spr were each tried the same way
+    # and each crashed while compressed, so it is this slot and not the size.
+    #
+    # The corpus said so too and I read it as convention: 113 of 118 shipped
+    # back.spr are uncompressed, where 43 of 47 _back.spr are compressed. The
+    # five compressed ones are 482 bytes and 16 KB, small enough that whatever
+    # goes wrong may not reach far enough to show.
+    #
+    # _back.spr is the way to have a compressed backdrop: a different slot,
+    # read by the sprite loader, and it overrides back.spr when both are there.
+    compress_this = compress_spr and lower != 'back.spr'
     blob = encode_sprite(cell_w, cell_h, frames, remapped, palette,
                          meta.get('flags', 1), meta.get('framerate', 0),
                          compress=compress_this)
