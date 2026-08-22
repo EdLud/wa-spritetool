@@ -86,7 +86,7 @@ absolutely clean: among the packed layouts, B only ever occurs with 1-2 streams
 In every layout, field 1 (the middle u32) is the decompressed length; the
 variants differ only in how the stream's position is expressed.
 
-**Variant A** — `(position, unused, decompressed_length)`. Four bytes of padding
+**Variant A** — `(position, unused, decompressed_length)`. Two bytes of padding
 follow the table before the sprite record. Field 2 holds the length here rather
 than field 1.
 
@@ -105,9 +105,19 @@ position field is off by one: stream *k* begins where record *k-1* points, and
 stream 0 begins at 0. The final record's position field is 0.
 
 All three are the same 12-byte record with one always-zero slot in a different
-place: it is field 1 in A (1040 records checked) and field 0 in B and C (306
-and 479 records). That is consistent with the layouts being encoder revisions
-that shuffled the struct rather than three unrelated designs.
+place: it is field 1 in A and field 0 in B and C. The slot is zero in **every**
+stream record across the shipped archives (4202 A-records and 2974 B/C-records,
+checked exhaustively) — so it carries no data in any file the game ships, and
+what it was reserved for remains unknown.
+
+**Why two layouts?** Not alignment. The `ncol % 4` pad after the stream count
+already brings the stream table to a 4-byte boundary for *every* value of
+`ncol % 4` (verified across all shipped sprites), and both the A tail (+2) and
+the B/C tail (−2) then land the sprite record at an offset congruent to 2 mod
+4 — which all 3039 compressed sprites satisfy. So either tail would work for
+any palette length; the `ncol % 4` split is not forced by alignment. The two
+forms are simply different encoder conventions, and the correlation with
+`ncol % 4` reflects which tool wrote the file, not a structural requirement.
 
 Field 1 can be corroborated without decoding anything: for each stream, the
 largest `data_pos + box_area` among the frames referring to it equals that
@@ -170,8 +180,21 @@ bottom-up; a decoder that also reverses frame order and row order produces
 output that matches a naive byte-for-byte BMP comparison while being upside
 down on screen. Compare what a viewer renders, not the raw pixel bytes.
 
-The `/256` scaling on the stream selector is confirmed but unexplained —
-observed values were 0, 256, 512, 768, 1024, 1280 for a 6-stream sprite.
+The selector's `/256` scaling is now understood. The two leading u16 fields of
+the frame record are really one little-endian 32-bit word, and the stream
+number sits in its **top byte**: `selector / 256` is `(high16 >> 8)`. In every
+compressed sprite the low byte of the selector word is 0 (all observed values
+are multiples of 256 — 0, 256, 512, … up to 37376), so bits 16–23 of the word
+are always 0 and only the top byte carries the stream index.
+
+This unifies with the uncompressed form. There the same 32-bit word is a full
+frame offset — `selector * 65536 + data_pos` — and the selector takes small
+values (0–20 observed), the high word of offsets that run past 64 KB. One
+field, two readings: a 32-bit offset when there is a single implicit stream,
+or a 16-bit offset plus a stream number in the top byte when streams are
+split. Verified across 8611 sprites: 0 compressed frames with a non-multiple
+of 256, and 5572 uncompressed sprites whose frames all land at
+`selector * 65536 + data_pos` within the blob.
 
 The BNK sprite-bank format documents its Frame struct as `int16 Stream` then
 `int16 Data Position`, i.e. a plain stream number in the first field. That does
@@ -241,14 +264,27 @@ Two edge cases in the frame table, both encountered in real files:
 
 ## Unresolved
 
-- **Why** the palette length and stream count select the layout. The rule is
-  empirically exact over 2005 files, but the underlying reason is unknown --
-  most likely these are different encoder versions or tools, and the
-  correlation with `ncol % 4` is an alignment side effect rather than a cause.
-- The unused u32 in every stream record (field 0 in B and C, field 1 in A).
-- The `/256` scaling on the frame's stream selector. Whatever the shift is
-  for, the field is read as signed, which is what caps a sprite at 128
-  streams (see "At most 128 streams").
-- Whether the 3 bytes of slack the decompressor allocates are genuinely needed
-  for these files, or only for the W:A `Training*.img` maps the compression
-  page mentions.
+- **Which encoders wrote which layout, and why the unused u32 exists.** The
+  stream-table layout is *not* selected by alignment — the `ncol % 4` pad
+  already aligns the table for every palette length, and either tail lands the
+  sprite record at the 2-mod-4 offset every shipped sprite uses (see "Stream
+  table"). So the A/B/C split reflects different encoder builds, but which
+  tools produced which form, and what the always-zero u32 was reserved for,
+  are unknown. The slot is zero in every shipped record (7176 checked), so a
+  decoder may ignore it.
+- Whether the 3 bytes of slack the decompressor allocates are genuinely needed.
+  For sprites they are not: across all 7176 shipped sprite streams, every one
+  ends exactly at its decompressed length and none writes into the slack. The
+  slack originates with the W:A `Training*.img` maps the compression page
+  mentions, a different file type; whether any of those overruns is untested
+  here.
+
+## Resolved since these notes began
+
+- **The `/256` scaling on the stream selector** — the two leading u16s are one
+  32-bit word and the stream number is its top byte; see "Frame table". The
+  same word is a full 32-bit offset in uncompressed sprites. The field is read
+  as signed, which is what caps a sprite at 128 streams (see "At most 128
+  streams").
+- **The 3-byte decompressor slack for sprites** — not needed; no shipped
+  sprite stream overruns (above).
