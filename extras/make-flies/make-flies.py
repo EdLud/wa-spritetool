@@ -43,7 +43,7 @@ FRAME_H = 400
 FRAMES = 128
 
 # --- the swarm ------------------------------------------------------------
-N_FLIES = 50
+N_FLIES = 13
 SIZE_RANGE = (2.0, 4.0)     # px, per fly
 
 # Brown. Flies are dark, and at 2px a fly is one blob of colour, so the range
@@ -146,7 +146,7 @@ class Firefly:
         return self.glow_color or self.body()
 
 # --- motion ---------------------------------------------------------------
-SPEED_RANGE = (2.2, 5.5)    # px per frame while dashing
+SPEED_RANGE = (1.2, 2.5)    # px per frame while dashing
 DASH_FRAMES = (4, 14)       # frames held on one heading before a turn
 TURN_MIN, TURN_MAX = 35, 165   # degrees a heading jumps at a turn
 HOVER_CHANCE = 0.28         # fraction of dashes spent hovering instead
@@ -412,11 +412,11 @@ def save_gif(sheet, path, frames=FRAMES, h=FRAME_H, duration=33,
 # both flash in unison, which reads as a string of lights rather than as
 # insects that happen to be near each other.
 FIREFLIES = [
-    # Firefly(size=1.0, glow=4.0, glow_gamma=1.7, lit_frames=80, lit_from=0),
-    # Firefly(size=0.6, glow=5.0, glow_gamma=1.4, lit_frames=60, lit_from=34,
-    #         pulse_period=31.0, pulse_depth=0.45),
-    # Firefly(size=1.8, glow=3.2, glow_gamma=2.0, lit_frames=50, lit_from=96,
-    #         pulse_period=19.0, pulse_depth=0.25),
+    Firefly(size=1.0, glow=4.0, glow_gamma=1.7, lit_frames=80, lit_from=0),
+    Firefly(size=0.6, glow=5.0, glow_gamma=1.4, lit_frames=60, lit_from=34,
+            pulse_period=31.0, pulse_depth=0.45),
+    Firefly(size=1.8, glow=3.2, glow_gamma=2.0, lit_frames=50, lit_from=96,
+            pulse_period=19.0, pulse_depth=0.25),
 ]
 
 

@@ -13,7 +13,7 @@ extracted/
 output/
 output*/
 tmp/
-test/
+local/
 
 # Local editor and agent config, not part of the tool.
 .claude/
