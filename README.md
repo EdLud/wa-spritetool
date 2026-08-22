@@ -140,7 +140,7 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 A terrain has a minimum set of requirements for it to load ingame. `pack-terrain` will refuse to pack a terrain
 unless all those files are present. If some files are missing, default files are offered to the user which will be 
 written into `/build`. 
-The defaults spend **none** of the 112-colour budget.
+The defaults spend none of the 112-colour budget.
 
 MUST haves:
 

@@ -35,6 +35,14 @@ MAX_DIM = 8192
 # splitting exactly; see encode_sprite.
 MAX_DATA_POS = 16384
 
+# Most streams a sprite may have. A frame names its stream as stream*256 in a
+# u16 the game reads as signed, so stream 128 is the first whose selector
+# (32768) flips negative and sends the loader to a wild pointer -- the game
+# dies with an access violation. Nothing shipped exceeds 128 streams (the
+# 128-frame front.spr files are the largest), which is the encoder's own
+# tools refusing to go past it too.
+MAX_STREAMS = 128
+
 
 class DecompressionError(Exception):
     """Raised when a Team17 stream is malformed or does not decode as expected.
@@ -1640,6 +1648,16 @@ def encode_sprite(width: int, height: int, frames: int, pixels: bytes,
         placement.append((len(streams) - 1, len(streams[-1])))
         streams[-1] += crop
         frames_in_stream[-1] += 1
+
+    if compress and len(streams) > MAX_STREAMS:
+        # Dense frames are what does it: each one overflows MAX_DATA_POS on
+        # its own and so takes a whole stream, and past MAX_STREAMS the game
+        # cannot index them. The levers are fewer frames, a smaller cell, or
+        # less ink per frame -- all of which cut the stream count.
+        raise ValueError(
+            f'this sprite needs {len(streams)} streams, over the '
+            f'{MAX_STREAMS} the game can load; use fewer frames, a smaller '
+            f'cell, or sparser frames')
 
     ncol = len(palette) // 3
     out = bytearray()
@@ -3284,15 +3302,22 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
     # were held out for a while, on the strength of one crash and the fact
     # that the stock terrains mostly store them raw -- 115 of 130 debris and
     # 113 of 118 back. But mostly is not always, and the exceptions settle it:
-    # Coral Reef ships a COMPRESSED debris.spr at 400x400 by 160 frames, the
-    # same shape as one we were writing raw, and it loads. Distant Planet and
-    # Hildegard ship compressed back.spr files, and they load.
+    # Coral Reef ships a COMPRESSED debris.spr at 400x400 by 160 frames, and
+    # it loads. Distant Planet and Hildegard ship compressed back.spr files,
+    # and they load.
     #
     # Holding them out was expensive. Debris is nearly all transparent -- 0.17%
     # ink in the terrain that prompted this -- so raw storage is almost pure
     # padding: 18,100,648 bytes where compression gives 274,981, the same
     # pixels either way. That one file put the archive over wkTerrainSync's
     # 10 MB transfer limit and made the terrain unsendable.
+    #
+    # Compression is only safe while the stream count stays at MAX_STREAMS or
+    # under, which is a question of ink, not shape. Coral Reef's debris is
+    # sparse -- ~784 ink pixels a frame -- so its 160 frames pack into 7
+    # streams. A dense 400x400 frame holds ~120,000 and overflows MAX_DATA_POS
+    # alone, taking a stream to itself; 160 of those need 160 streams and the
+    # game cannot load them. encode_sprite refuses that case.
     compress_this = compress_spr
     blob = encode_sprite(cell_w, cell_h, frames, remapped, palette,
                          meta.get('flags', 1), meta.get('framerate', 0),

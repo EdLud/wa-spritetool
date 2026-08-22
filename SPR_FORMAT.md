@@ -180,6 +180,22 @@ six-stream file. In `.spr` the two fields are ordered `data_pos` then
 `stream << 8`. The formats are clearly related but not identical here, so the
 BNK spec is a useful guide rather than an authority for `.spr`.
 
+### At most 128 streams
+
+A sprite may not have more than **128 streams**. The selector holds
+`stream << 8`, so stream 128 encodes as 32768 — which the game reads as a
+*signed* 16-bit value, i.e. −32768. Every frame in stream 128 or beyond thus
+resolves to a negative stream index and a wild pointer, and the game dies with
+an access violation. This was hit in practice with a dense 400×400×160
+`debris.spr`: each frame overflowed `MAX_DATA_POS` alone and took its own
+stream, so 160 frames needed 160 streams.
+
+Nothing shipped comes near the limit — the largest are the 128-frame
+`front.spr` files, and `Gfx.dir` tops out at 25 streams (`cdrom.spr`) — which
+is the game's own tools observing the same bound. The encoder refuses to write
+more than 128 streams; the levers are fewer frames, a smaller cell, or sparser
+frames, all of which cut the stream count.
+
 ## Sprite flags
 
 The u16 at the start of the sprite record is the playback mode, matching the
@@ -230,7 +246,9 @@ Two edge cases in the frame table, both encountered in real files:
   most likely these are different encoder versions or tools, and the
   correlation with `ncol % 4` is an alignment side effect rather than a cause.
 - The unused u32 in every stream record (field 0 in B and C, field 1 in A).
-- The `/256` scaling on the frame's stream selector.
+- The `/256` scaling on the frame's stream selector. Whatever the shift is
+  for, the field is read as signed, which is what caps a sprite at 128
+  streams (see "At most 128 streams").
 - Whether the 3 bytes of slack the decompressor allocates are genuinely needed
   for these files, or only for the W:A `Training*.img` maps the compression
   page mentions.

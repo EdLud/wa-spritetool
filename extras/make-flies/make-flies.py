@@ -40,10 +40,10 @@ from PIL import Image, ImageDraw
 # --- sheet geometry -------------------------------------------------------
 FRAME_W = 400
 FRAME_H = 400
-FRAMES = 160
+FRAMES = 128
 
 # --- the swarm ------------------------------------------------------------
-N_FLIES = 35
+N_FLIES = 50
 SIZE_RANGE = (2.0, 4.0)     # px, per fly
 
 # Brown. Flies are dark, and at 2px a fly is one blob of colour, so the range
