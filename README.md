@@ -122,6 +122,7 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 | Flag | Effect |
 |---|---|
 | `--no-compress-img` | store images uncompressed |
+| `--no-compress-spr` | store sprites uncompressed |
 | `--no-recreate` | reuse an existing `.spr`/`.img`* instead of rebuilding from BMP |
 | `--opaque-img` | treat images as having no transparent colour |
 | `--force` | write the archive even if it would not load |
@@ -142,30 +143,38 @@ unless all those files are present. If some files are missing, default files are
 written into `/build`. 
 The defaults spend none of the 112-colour budget.
 
+The offer is made **once**, on the folder's first run, one piece at a time --
+declining a required piece stops the build, declining an optional one carries
+on without it. `settings.spritetool` is then written into the folder, and
+nothing is offered again: a piece missing on a later run was deleted on
+purpose rather than overlooked. The required ones are still checked every run,
+since the game will not open the terrain without them. Delete
+`settings.spritetool` to be asked about everything once more.
+
 MUST haves:
 
 - a land texture (`text.png`). Dimensions: 256 x 256 
 
 Default:
 
-![landtexture](presets/text.img.png)
+![landtexture](presets/text.png)
 - a soil texture (`soil.png`). Dimensions: 256 x 256 
 - a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide).
 
 Default:
 
-![grass](presets/grass.img.png)
+![grass](presets/grass.png)
 - a sky gradient (`gradient.png`). Dimensions: 8 x 916
 - 3 bridge pieces (`bridge-l.png`), (`bridge.png`), (`bridge-r.png`). Dimensions: 64 pixels wide, variable height.
 
 Default:
 
-![bridge-l](presets/bridge-l.img.png) ![bridge](presets/bridge.img.png) ![bridge-r](presets/bridge-r.img.png) 
+![bridge-l](presets/bridge-l.img.png) ![bridge](presets/bridge.png) ![bridge-r](presets/bridge-r.img.png) 
 - an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
 
 Default:
 
-![icon](presets/icon.img.png)
+![icon](presets/icon.png)
 
 - a soil texture (`soil.png`) Dimensions: 256 x 256
 Default is an empty image.

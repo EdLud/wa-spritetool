@@ -2048,11 +2048,21 @@ DEFAULT_DEBRIS = 'debris.spr'
 # The icon, kept under its own name because it is not an archive entry: it
 # goes beside Level.dir as TEXT.img. A terrain needs one, so it is offered
 # like the bridge and refused like it when declined.
-DEFAULT_ICON = 'logo.img'
+DEFAULT_ICON = 'icon.img'
 # The land texture and the sky. Offered rather than insisted on: a terrain
 # cannot go without either, but standing in for them is lending someone
 # else's look, so it is a question rather than something done quietly.
 DEFAULT_LOOK = ('text.img', 'gradient.img')
+
+# Written into a build folder the first time it is packed, and looked for on
+# every run after. Its presence is what makes lending art a first-run
+# question: once an author has answered it, a piece that is missing later was
+# deleted on purpose, and asking again would talk them back into art they
+# already turned down.
+SETTINGS_FILE = 'settings.spritetool'
+# What the game will not open without. Everything else is offered once and
+# never mentioned again.
+REQUIRED_ASSETS = DEFAULT_LOOK + DEFAULT_BRIDGE + (DEFAULT_ICON,)
 # Filled in without asking. Both are blank, so no look is being imposed and
 # there is nothing to decide -- and the game does not treat them as optional:
 # with no grass.img its ApplyGrassFringe reads the grass through a pointer
@@ -2063,6 +2073,10 @@ DEFAULT_LOOK = ('text.img', 'gradient.img')
 # with a blank would only give the game something to draw where it would
 # otherwise draw the sky.
 DEFAULT_SILENT = ('soil.img', 'grass.img')
+# The parallax layers. All optional -- a terrain plays with none of them, and
+# 24 stock ones ship no back.spr at all -- so each is offered once and taken
+# or not. back.spr and _back.spr hold a single frame; back2 and front animate.
+DEFAULT_LAYERS = ('back.spr', 'back2.spr', 'front.spr')
 REPO_URL = 'https://github.com/EdLud/wa-spritetool'
 
 
@@ -2121,14 +2135,25 @@ def _copy_defaults(pieces: Dict[str, str], source_dir: str) -> List[str]:
     import shutil
     copied: List[str] = []
     for name, path in sorted(pieces.items()):
-        for src in (path, path[:-len(os.path.splitext(path)[1])] + '.spd'):
+        # The .spd is named for the ENTRY, not for the picture: the preset
+        # for back.spr is back.png beside back.spr.spd. Deriving it from the
+        # picture looks for back.spd, finds nothing, and the sprite is packed
+        # without the frame count it cannot be built without.
+        candidates = [(path, os.path.basename(path))]
+        if name.lower().endswith('.spr'):
+            spd = os.path.join(os.path.dirname(path), f'{name}.spd')
+            candidates.append((spd, f'{name}.spd'))
+        for src, as_name in candidates:
             if not os.path.exists(src):
                 continue
-            dest = os.path.join(source_dir, os.path.basename(src))
+            dest = os.path.join(source_dir, as_name)
             if os.path.exists(dest):
                 continue
+            # An author's picture is never written over, but a sprite of
+            # theirs with no .spd beside it still cannot be built -- so the
+            # metadata is copied even where the art was left alone.
             shutil.copyfile(src, dest)
-            copied.append(os.path.basename(dest))
+            copied.append(as_name)
     return copied
 
 
@@ -2212,16 +2237,64 @@ def _settle_object_settings(folder: str, objects: Sequence[str],
     return settings, ''
 
 
+def _today() -> str:
+    import datetime
+    return datetime.date.today().isoformat()
+
+
+def read_settings(folder: str) -> Optional[Dict[str, str]]:
+    """A build folder's settings, or None when it has never been packed.
+
+    None is the thing worth knowing: it means the folder is new, and that a
+    missing piece has not been declined yet but simply never offered.
+    """
+    path = os.path.join(folder, SETTINGS_FILE)
+    if not os.path.exists(path):
+        return None
+    out: Dict[str, str] = {}
+    with open(path, 'r', encoding='latin-1') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith('//') or '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            out[key.strip()] = value.strip()
+    return out
+
+
+def write_settings(folder: str, values: Dict[str, str]) -> None:
+    """Mark the folder as packed once, and keep what was settled."""
+    lines = ['// Written by spritetool the first time this folder was packed.',
+             '// Its presence is what stops the defaults being offered again:',
+             '// a piece missing now was deleted on purpose, not overlooked.',
+             '// Delete this file to be asked about everything once more.',
+             '']
+    for key in sorted(values):
+        lines.append(f'{key} = {values[key]}')
+    with open(os.path.join(folder, SETTINGS_FILE), 'w',
+              encoding='latin-1') as fh:
+        fh.write('\n'.join(lines) + '\n')
+
+
+def _has_icon(source_dir: str) -> bool:
+    present = {n.lower() for n in os.listdir(source_dir)}
+    return any(f'icon{s}' in present
+               for s in ('.png', '.img.png', '.bmp', '.img.bmp'))
+
+
 def _fill_from_defaults(names: List[str], source_dir: str,
-                        assume: Optional[bool]
+                        assume: Optional[bool], first_run: bool
                         ) -> Tuple[List[str], Dict[str, str], str]:
-    """Offer the shipped art for a bridge or debris the folder has not got.
+    """Offer the shipped art for whatever the folder has not got.
+
+    Only on a folder's first run, which `first_run` decides. After that a
+    missing piece is the author's doing and the only question left is whether
+    the game will open the result, so the required ones are checked and the
+    optional ones are not mentioned.
 
     Returns the entry list, the sources keyed by entry name, and a reason to
-    stop when there is one. A terrain without a bridge is refused rather than
-    written: the game draws one whenever a map is generated with bridges, and
-    will not load a terrain that has none. Debris it can do without -- the
-    guide calls it required, but a terrain packs and plays with an emptier sky.
+    stop when there is one. Declining a required piece stops the build;
+    declining an optional one carries on without it.
     """
     borrowed: Dict[str, str] = {}
     have = {n.lower() for n in names}
@@ -2235,15 +2308,35 @@ def _fill_from_defaults(names: List[str], source_dir: str,
     def take(wanted: Sequence[str]) -> None:
         available = default_sources(wanted)
         for piece in wanted:
+            if piece == DEFAULT_ICON:
+                continue            # not an archive entry; copied below
             borrowed[piece] = available[piece]
             names.append(piece)
-        for copied in _copy_defaults({p: available[p] for p in wanted},
-                                     source_dir):
+        for copied in _copy_defaults(
+                {p: available[p] for p in wanted if p != DEFAULT_ICON},
+                source_dir):
             print(f'  copied {copied} into {where}', file=sys.stderr)
 
-    # The blank ones first, and without asking: there is no look to choose
-    # between, and a terrain without grass crashes the game outright.
-    silent = [s for s in DEFAULT_SILENT if s.lower() not in have]
+    def lacking(piece: str) -> bool:
+        if piece == DEFAULT_ICON:
+            return not _has_icon(source_dir)
+        return piece.lower() not in have
+
+    if not first_run:
+        # Nothing is offered. What remains is whether the game can open it:
+        # the required pieces have to be there, however they got there.
+        gone = [p for p in REQUIRED_ASSETS if lacking(p)]
+        if gone:
+            pretty = ', '.join(p.split('.')[0] for p in gone)
+            return names, borrowed, (
+                f'no {pretty}. A terrain needs it, and this folder has been '
+                f'packed before, so nothing is offered -- put it back, or '
+                f'delete {SETTINGS_FILE} to be asked again')
+        return names, borrowed, ''
+
+    # The blank ones, without asking: there is no look to choose between, and
+    # a terrain without grass crashes the game outright.
+    silent = [s for s in DEFAULT_SILENT if lacking(s)]
     if silent:
         stock = default_sources(silent)
         got = [s for s in silent if s in stock]
@@ -2253,69 +2346,54 @@ def _fill_from_defaults(names: List[str], source_dir: str,
         if lost:
             return names, borrowed, missing_note(', '.join(lost), lost)
 
-    # The look before the furniture: a terrain with no texture and no sky is
-    # the one case where the defaults decide what it looks like rather than
-    # filling a gap, so it is asked first and plainly.
-    look_missing = [n for n in DEFAULT_LOOK if n.lower() not in have]
-    if look_missing:
-        available = default_sources(DEFAULT_LOOK)
-        lost = [n for n in look_missing if n not in available]
-        if lost:
-            return names, borrowed, missing_note(', '.join(lost), lost)
-        stems = [n.split('.')[0] for n in look_missing]
-        lacks = ' and no '.join(stems)
-        wanted = ' and '.join(stems)
-        print(f'This terrain has no {lacks}. The tool can lend its own, but '
-              f'a texture and a sky are what a terrain looks like -- borrow '
-              f'them and it will look like the one they came from.')
-        if not ask(f'Use the default {wanted} and write it to {where}?',
-                   assume):
-            return names, borrowed, ('a terrain needs a land texture and a '
-                                     'sky; nothing else can stand in for '
-                                     'what it looks like')
-        take(look_missing)
-
-    bridge_missing = [b for b in DEFAULT_BRIDGE if b.lower() not in have]
-    if bridge_missing:
-        available = default_sources(DEFAULT_BRIDGE)
-        if len(available) < len(DEFAULT_BRIDGE):
-            return names, borrowed, missing_note('complete bridge',
-                                                 DEFAULT_BRIDGE)
-        got = len(DEFAULT_BRIDGE) - len(bridge_missing)
-        print(f'This terrain has {got} of the 3 bridge pieces; the game needs '
-              f'all three and will not load without them.')
-        if not ask(f'Use the default bridge and write it to {where}?', assume):
-            return names, borrowed, 'a terrain needs all 3 bridge pieces'
-        take(bridge_missing)
-
-    if DEFAULT_DEBRIS.lower() not in have:
-        available = default_sources((DEFAULT_DEBRIS,))
-        if DEFAULT_DEBRIS not in available:
-            print(f'  note: {missing_note("debris", (DEFAULT_DEBRIS,))}',
+    # Everything else one at a time, so each is a decision of its own rather
+    # than one answer standing for several pieces.
+    offers = (
+        (DEFAULT_LOOK[0], True,
+         'the land texture, which every piece of ground is tiled from'),
+        (DEFAULT_LOOK[1], True,
+         'the sky behind the map'),
+        (DEFAULT_BRIDGE, True,
+         'the bridge, which the game draws whenever a map is generated '
+         'with one'),
+        (DEFAULT_ICON, True,
+         'the icon shown for this terrain on the land generator screen'),
+        (DEFAULT_DEBRIS, False,
+         'the debris that falls through the sky'),
+        (DEFAULT_LAYERS[0], False,
+         'a still backdrop behind the map'),
+        (DEFAULT_LAYERS[1], False,
+         'an animated layer behind the map'),
+        (DEFAULT_LAYERS[2], False,
+         'an animated layer in front of the map'),
+    )
+    for piece, required, what in offers:
+        pieces = piece if isinstance(piece, tuple) else (piece,)
+        gone = [p for p in pieces if lacking(p)]
+        if not gone:
+            continue
+        available = default_sources(pieces)
+        if any(p not in available for p in pieces):
+            if required:
+                return names, borrowed, missing_note(
+                    pieces[0].split('.')[0], pieces)
+            print(f'  note: {missing_note(pieces[0].split(".")[0], pieces)}',
                   file=sys.stderr)
-        else:
-            print('This terrain has no debris. It will play without one, only '
-                  'with an emptier sky.')
-            if ask(f'Use the default debris and write it to {where}?', assume):
-                take((DEFAULT_DEBRIS,))
-
-    # The icon is not an archive entry -- it goes beside Level.dir as
-    # TEXT.img -- but a terrain needs one, so it is asked for here with the
-    # rest and copied into the folder under the name the scan looks for.
-    if not any(f'icon{s}' in {n.lower() for n in os.listdir(source_dir)}
-               for s in ('.png', '.img.png', '.bmp', '.img.bmp')):
-        available = default_sources((DEFAULT_ICON,))
-        if DEFAULT_ICON not in available:
-            return names, borrowed, missing_note('icon', ('icon.png',))
-        print('This terrain has no icon. The game shows one for it on the '
-              'land generator screen and will not load a terrain without.')
-        if not ask(f'Use the default icon and write it to {where}?', assume):
-            return names, borrowed, 'a terrain needs an icon'
-        dest = os.path.join(source_dir, 'icon.img.png')
-        if not os.path.exists(dest):
-            import shutil
-            shutil.copyfile(available[DEFAULT_ICON], dest)
-            print(f'  copied icon.img.png into {where}', file=sys.stderr)
+            continue
+        stem = pieces[0].split('.')[0]
+        need = 'needs' if required else 'can do without'
+        print(f'No {stem}: {what}. A terrain {need} it.')
+        if not ask(f'Use the default {stem} and write it to {where}?', assume):
+            if required:
+                return names, borrowed, f'a terrain needs {stem}'
+            continue
+        take(gone)
+        if DEFAULT_ICON in gone:
+            dest = os.path.join(source_dir, 'icon.img.png')
+            if not os.path.exists(dest):
+                import shutil
+                shutil.copyfile(available[DEFAULT_ICON], dest)
+                print(f'  copied icon.img.png into {where}', file=sys.stderr)
     return names, borrowed, ''
 
 
@@ -3341,6 +3419,7 @@ def print_help():
     print("                                    Build a terrain's Level.dir,")
     print("                                    with the guide's rules applied")
     print("                                    --no-compress-img  store images raw")
+    print("                                    --no-compress-spr  store sprites raw")
     print("                                    --no-recreate      reuse existing .spr/.img")
     print("                                    --opaque-img       no transparent colour")
     print("                                    --force            write even if the")
@@ -3804,8 +3883,13 @@ def main():
                         return 1
                     for stem, values in obj_settings.items():
                         synthetic[f'{stem}.inf'] = format_inf(values)
+                    settings = read_settings(source_dir)
+                    first_run = settings is None
+                    if first_run:
+                        print(f"  first run: offering what "
+                              f"{DEFAULTS_DIR} has for anything missing")
                     names, borrowed, refused = _fill_from_defaults(
-                        names, source_dir, assume_defaults)
+                        names, source_dir, assume_defaults, first_run)
                     if refused:
                         print(f"Not packing "
                               f"{os.path.basename(source_dir)}: {refused}")
@@ -3817,6 +3901,14 @@ def main():
                         # packs to one archive whether or not this was the run
                         # that fetched them.
                         names, _objects, _ = scan_terrain(source_dir)
+                    if first_run:
+                        # Written whatever was decided, including nothing:
+                        # the point is that the questions were asked once.
+                        write_settings(source_dir, {
+                            'created': _today(),
+                            'borrowed': (','.join(sorted(borrowed))
+                                         or 'nothing'),
+                        })
                         # They keep no claim on the palette, though: the budget
                         # is the author's, and a default is fitted to what is
                         # left of it rather than shrinking their work for it.
