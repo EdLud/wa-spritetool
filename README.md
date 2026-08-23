@@ -133,6 +133,7 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 | `--write-palette` | draw the terrain's colours to `palette.png` |
 | `--read-palette` | fit every picture to the colours in `palette.png` |
 | `--no-palette` | cut no shared palette; each picture keeps its own |
+| `--repalette` | fit the art to one palette without asking |
 
 *  - see `the spd format - sprite configuration `
 **  - see further down
@@ -230,9 +231,22 @@ So every source is reduced to that form:
 That second rule reads the picture rather than its extension, so the same art
 packs the same way saved either way.
 
-**Colour is cut across everything.** Every picture is fitted to one palette
-the tool cuts over the whole terrain, whatever its format and whether or not
-it arrived indexed. A `.bmp` used to be exempt, its colours kept whole and the
+**Art that fits is left alone.** If your own pictures draw 112 colours or
+fewer, those colours *are* the terrain's palette: nothing is moved, and the
+borrowed art is fitted to what you drew. Pack again and you get the same
+archive, because there was no cut to redo.
+
+**Past 112, you are asked.** Fitting more colours than the terrain can hold is
+a statistical shift -- colours move, and they move differently as the art
+changes, so a folder does not pack the same way twice. `pack-terrain` offers
+to do it and builds either way; declining packs the art as authored and
+reports what the total came to. `--repalette` answers yes without asking.
+
+The way to a terrain that packs identically every time is to bring the art
+inside 112 yourself.
+
+**When the cut does run, it runs across everything.** Every picture is fitted
+to it, whatever its format and whether or not it arrived indexed. A `.bmp` used to be exempt, its colours kept whole and the
 rest of the art left to divide what remained -- but that made the file's
 extension decide whose colours were honoured, and an indexed `.png` is just as
 authored.

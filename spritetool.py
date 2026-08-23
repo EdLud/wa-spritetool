@@ -1597,6 +1597,33 @@ def _caption_colours(palette: Sequence[Tuple[int, int, int]],
     return first, second
 
 
+def _authors_colours(sources: Dict[str, str], lent: Sequence[str]
+                     ) -> Optional[set]:
+    """Every colour the author's own pictures draw, or None if unreadable.
+
+    Borrowed art is left out: it has no claim on the budget and is fitted to
+    whatever the author's work needs, so it cannot be what pushes a terrain
+    over the limit.
+    """
+    skip = {n.lower() for n in lent}
+    seen: set = set()
+    for name, path in sources.items():
+        if name.lower() in skip:
+            continue
+        try:
+            with open(path, 'rb') as fh:
+                blob = fh.read()
+            if path.lower().endswith('.png'):
+                seen |= set(png_colour_counts(blob))
+            else:
+                _w, _h, pixels, pal = read_bmp(blob)
+                seen |= {tuple(pal[v * 3:v * 3 + 3])
+                         for v in set(pixels) if v}
+        except Exception:
+            return None
+    return seen
+
+
 def plan_shared_palette(sources: Dict[str, str],
                         budget: int = MAX_SHARED_COLOURS,
                         borrowed: Sequence[str] = ()
@@ -3735,6 +3762,9 @@ def print_help():
     print("                                                       colours to palette.png")
     print("                                    --no-palette       leave colours as")
     print("                                                       authored")
+    print("                                    --repalette        fit the art to one")
+    print("                                                       palette without")
+    print("                                                       asking")
     print("                                    --read-palette     fit the art to the")
     print("                                                       colours in palette.png")
     print("  decompress <dir_file> [output_dir] [--gif]")
@@ -4089,6 +4119,7 @@ def main():
                  '--no-recreate', '--opaque-img', '--force',
                  '--defaults', '--no-defaults', '--no-output-inf',
                  '--write-palette', '--read-palette', '--no-palette',
+                 '--repalette',
                  '--offer-defaults'}
         unknown = [o for o in opts if o not in known]
         if unknown:
@@ -4107,6 +4138,8 @@ def main():
         write_palette = '--write-palette' in opts
         read_palette = '--read-palette' in opts
         no_palette = '--no-palette' in opts
+        # Answer the repalette question ahead of time, for a script.
+        repalette = '--repalette' in opts
         # Ask about the defaults again on a folder that has already been
         # packed. The settings file is what normally silences them, and it is
         # meant to accumulate real settings, so it should not have to be
@@ -4336,10 +4369,44 @@ def main():
             print(f"  reading {len(shared_palette)} colours from "
                   f"{PALETTE_NAME}")
         elif terrain:
-            shared_palette, palette_notes = plan_shared_palette(
-                picture_sources, borrowed=lent_names)
-            for note in palette_notes:
-                print(f'  note: {note}', file=sys.stderr)
+            # Only when the art will not fit as it is. An author whose own
+            # pictures already sit inside the 112 needs nothing done to them:
+            # their colours become the terrain's palette, the borrowed art is
+            # fitted to those, and packing again does exactly the same thing.
+            # Cutting regardless is what used to make a folder drift -- a lent
+            # picture was remapped, became ordinary, and was remapped again
+            # against a palette that had moved meanwhile.
+            own = _authors_colours(picture_sources, lent_names)
+            if own is not None and len(own) <= MAX_SHARED_COLOURS:
+                shared_palette = sorted(own)
+                print(f"  {len(shared_palette)} colours in the art, inside "
+                      f"the {MAX_SHARED_COLOURS} a terrain may hold; nothing "
+                      f"moved")
+            elif own is not None:
+                # Past the budget, so something has to give. Fitting is a
+                # statistical shift rather than a lossless step, and its
+                # result depends on the art it was cut from -- so it is asked
+                # for rather than done quietly, and declining still builds.
+                take = repalette
+                if not take:
+                    print(f"This terrain draws {len(own)} colours and may "
+                          f"hold {MAX_SHARED_COLOURS}.")
+                    print("  Fitting them to one palette shifts colours by "
+                          "statistics, and shifts them differently as the art "
+                          "changes.")
+                    take = ask("Repalette it now?", assume_defaults)
+                else:
+                    print("  --repalette: performing a statistical palette "
+                          "shift; the output may drift as the art changes")
+                if take:
+                    shared_palette, palette_notes = plan_shared_palette(
+                        picture_sources, borrowed=lent_names)
+                    for note in palette_notes:
+                        print(f'  note: {note}', file=sys.stderr)
+                else:
+                    print("  packing as authored; the colour count after "
+                          "packing says what the total came to")
+
             if borrowed and shared_palette:
                 # Written back fitted, so the folder holds what the archive
                 # holds. Until now a lent picture was mapped on the way into
