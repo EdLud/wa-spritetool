@@ -187,17 +187,17 @@ Additionally it CAN have
 Default:
 
 ![_back](presets/_back.png)
-- an animated background layer (`back2.png`) Dimensions: 640 x 160
+- an animated background layer (`back2.png`) Default Dimensions: 640 x 160
 
 Default:
 
 ![back2](media/back2.gif)
 
-- an animated foreground layer (`front.png`) Dimensions: 640 x 160
+- an animated foreground layer (`front.png`) Default Dimensions: 1024 × 12300
 
 Default:
 
-![front](media/front.gif)
+![front](media/front.gif) Default Dimensions: 1024 × 32000
 
 
 
