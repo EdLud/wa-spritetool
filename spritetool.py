@@ -13,7 +13,8 @@ import struct
 import sys
 import os
 from pathlib import Path
-from typing import Optional, BinaryIO, Dict, Tuple, List, Sequence
+from typing import (Optional, BinaryIO, Dict, Tuple, List, Sequence,
+                    Callable, Mapping)
 
 try:
     from PIL import Image
@@ -2352,18 +2353,67 @@ def default_sources(names: Sequence[str]) -> Dict[str, str]:
     return found
 
 
-def ask(question: str, assume: Optional[bool] = None) -> bool:
-    """Yes or no from the terminal. `assume` answers for a non-interactive run."""
-    if assume is not None:
-        print(f'{question} [{"y" if assume else "n"}, not asking]')
-        return assume
-    try:
-        # Piped input counts: a terminal is not the only thing that answers.
-        return input(f'{question} [y/N] ').strip().lower().startswith('y')
-    except (EOFError, KeyboardInterrupt):
-        # Nothing to read from, so take the safe answer and say so.
-        print(f'{question} [n, nothing to read an answer from]')
-        return False
+@dataclasses.dataclass(frozen=True)
+class Question:
+    """Something the tool will not decide on the author's behalf.
+
+    `key` is how a caller answers it without being present: stable, and
+    grouped by a dot so that `defaults.` settles every piece of borrowed art
+    at once. `destructive` and `subjects` are for a caller that wants to show
+    what it is about to lose -- the CLI does not, but a dialog should.
+    """
+
+    key: str
+    prompt: str
+    default: bool = False
+    destructive: bool = False
+    subjects: Tuple[str, ...] = ()
+
+
+#: Answers a Question. The CLI reads a terminal; a GUI opens a dialog; a test
+#: hands back a fixed answer.
+Asker = Callable[[Question], bool]
+
+
+def _settled(answers: Mapping[str, bool], key: str) -> Optional[bool]:
+    """An answer given ahead of time, exact or by group, or None."""
+    if key in answers:
+        return answers[key]
+    for prefix, value in answers.items():
+        if prefix.endswith('.') and key.startswith(prefix):
+            return value
+    return None
+
+
+def cli_asker(answers: Mapping[str, bool] = {}) -> Asker:
+    """Answer from `answers` where it has an opinion, else ask the terminal."""
+    def ask_one(question: Question) -> bool:
+        given = _settled(answers, question.key)
+        if given is not None:
+            print(f'{question.prompt} [{"y" if given else "n"}, not asking]')
+            return given
+        try:
+            # Piped input counts: a terminal is not the only thing that answers.
+            return input(f'{question.prompt} [y/N] ').strip().lower().startswith('y')
+        except (EOFError, KeyboardInterrupt):
+            # Nothing to read from, so take the safe answer and say so.
+            print(f'{question.prompt} '
+                  f'[{"y" if question.default else "n"}, '
+                  f'nothing to read an answer from]')
+            return question.default
+    return ask_one
+
+
+def answer_with(answers: Mapping[str, bool] = {}) -> Asker:
+    """Never ask. Anything unanswered takes the question's own default.
+
+    What a window uses before it has a dialog to show, and what a test uses
+    to pin one decision without pinning the rest.
+    """
+    def ask_one(question: Question) -> bool:
+        given = _settled(answers, question.key)
+        return question.default if given is None else given
+    return ask_one
 
 
 def _copy_defaults(pieces: Dict[str, str], source_dir: str) -> List[str]:
@@ -2399,7 +2449,7 @@ def _copy_defaults(pieces: Dict[str, str], source_dir: str) -> List[str]:
 
 
 def _settle_object_settings(folder: str, objects: Sequence[str],
-                            assume: Optional[bool]
+                            ask: Asker
                             ) -> Tuple[Dict[str, List[int]], str]:
     """Bring a terrain's object settings together into one file.
 
@@ -2452,7 +2502,11 @@ def _settle_object_settings(folder: str, objects: Sequence[str],
         print(f'{len(to_take)} object(s) keep their settings in a file of '
               f'their own: {shown}'
               + (f' and {len(to_take) - 4} more' if len(to_take) > 4 else ''))
-        if not ask(f'Move them into {SETTINGS_NAME} and delete them?', assume):
+        if not ask(Question(
+                'settings.consolidate',
+                f'Move them into {SETTINGS_NAME} and delete them?',
+                destructive=True,
+                subjects=tuple(sorted(to_take.values())))):
             return {}, (f'a terrain keeps its object settings in '
                         f'{SETTINGS_NAME}; nothing was changed')
         for stem, real in to_take.items():
@@ -2583,7 +2637,7 @@ def _recolour_borrowed(source_dir: str, borrowed: Dict[str, str],
 
 
 def _fill_from_defaults(names: List[str], source_dir: str,
-                        assume: Optional[bool], first_run: bool
+                        ask: Asker, first_run: bool
                         ) -> Tuple[List[str], Dict[str, str], str]:
     """Offer the shipped art for whatever the folder has not got.
 
@@ -2675,7 +2729,9 @@ def _fill_from_defaults(names: List[str], source_dir: str,
         stem = pieces[0].split('.')[0]
         need = 'needs' if required else 'can do without'
         print(f'No {stem}: {what}. A terrain {need} it.')
-        if not ask(f'Use the default {stem} and write it to {where}?', assume):
+        if not ask(Question(f'defaults.{stem}',
+                            f'Use the default {stem} and write it to '
+                            f'{where}?')):
             if required:
                 return names, borrowed, f'a terrain needs {stem}'
             continue
@@ -3810,6 +3866,12 @@ def print_help():
     print("                                    --repalette        fit the art to one")
     print("                                                       palette without")
     print("                                                       asking")
+    print("                                    --yes=KEY          answer a question")
+    print("                                    --no=KEY           ahead of time; keys")
+    print("                                                       are settings.")
+    print("                                                       consolidate,")
+    print("                                                       defaults.<piece>,")
+    print("                                                       palette.repalette")
     print("                                    --read-palette     fit the art to the")
     print("                                                       colours in palette.png")
     print("  decompress <dir_file> [output_dir] [--gif]")
@@ -3934,8 +3996,10 @@ class Options:
     no_palette: bool = False
     repalette: bool = False
     offer_defaults: bool = False
-    # None means ask; True and False answer ahead of time, for a script.
-    assume_defaults: Optional[bool] = None
+    #: Questions settled ahead of time, by key. A key ending in a dot settles
+    #: everything beneath it, which is what --defaults means: an opinion about
+    #: borrowed art in general rather than about one piece of it.
+    answers: Dict[str, bool] = dataclasses.field(default_factory=dict)
 
 
 PACK_FLAGS = {
@@ -3950,8 +4014,13 @@ PACK_FLAGS = {
     '--no-palette': ('no_palette', True),
     '--repalette': ('repalette', True),
     '--offer-defaults': ('offer_defaults', True),
-    '--defaults': ('assume_defaults', True),
-    '--no-defaults': ('assume_defaults', False),
+}
+
+#: Flags that settle a question rather than set an option.
+PACK_ANSWERS = {
+    '--defaults': ('defaults.', True),
+    '--no-defaults': ('defaults.', False),
+    '--repalette': ('palette.repalette', True),
 }
 
 
@@ -3966,14 +4035,28 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
     args = [a for a in argv[2:] if not a.startswith('-')]
     opts = [a for a in argv[2:] if a.startswith('-')]
 
-    unknown = [o for o in opts if o not in PACK_FLAGS]
+    options = Options()
+    unknown = []
+    for flag in opts:
+        # --yes=KEY and --no=KEY answer anything, including the questions no
+        # flag of its own was ever written for.
+        if flag.startswith('--yes=') or flag.startswith('--no='):
+            head, _, key = flag.partition('=')
+            if not key:
+                raise SpritetoolError(f"{head} needs a question to answer, "
+                                      f"as {head}=KEY")
+            options.answers[key] = head == '--yes'
+            continue
+        if flag in PACK_ANSWERS:
+            key, value = PACK_ANSWERS[flag]
+            options.answers[key] = value
+        if flag in PACK_FLAGS:
+            field, value = PACK_FLAGS[flag]
+            setattr(options, field, value)
+        elif flag not in PACK_ANSWERS:
+            unknown.append(flag)
     if unknown:
         raise SpritetoolError(f"unknown option(s): {', '.join(unknown)}")
-
-    options = Options()
-    for flag in opts:
-        field, value = PACK_FLAGS[flag]
-        setattr(options, field, value)
 
     if options.no_palette and options.read_palette:
         raise SpritetoolError(
@@ -4013,7 +4096,9 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
     no_palette = options.no_palette
     repalette = options.repalette
     offer_defaults = options.offer_defaults
-    assume_defaults = options.assume_defaults
+    # How anything the tool will not decide alone gets decided. The CLI reads
+    # a terminal where the flags have not already settled it.
+    ask = cli_asker(options.answers)
     args = [target] + ([out_arg] if out_arg else [])
 
     # Entries the folder does not hold a file for, built here instead.
@@ -4067,11 +4152,8 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
                     print(f'  note: {note}', file=sys.stderr)
                 synthetic['index.txt'] = ''.join(
                     f'{o}\r\n' for o in _objects).encode('latin-1')
-                # Not assume_defaults: that says whether to borrow art,
-                # and deleting a file the author wrote is a separate
-                # question that nothing should answer on their behalf.
                 obj_settings, trouble = _settle_object_settings(
-                    source_dir, _objects, None)
+                    source_dir, _objects, ask)
                 if trouble:
                     raise PackFailed(
                         f"Not packing "
@@ -4086,7 +4168,7 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
                     print(f"  {why}: offering what {DEFAULTS_DIR} has "
                           f"for anything missing")
                 names, borrowed, refused = _fill_from_defaults(
-                    names, source_dir, assume_defaults, first_run)
+                    names, source_dir, ask, first_run)
                 if refused:
                     raise PackFailed(
                         f"Not packing "
@@ -4243,7 +4325,8 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
                 print("  Fitting them to one palette shifts colours by "
                       "statistics, and shifts them differently as the art "
                       "changes.")
-                take = ask("Repalette it now?", assume_defaults)
+                take = ask(Question('palette.repalette',
+                                    'Repalette it now?'))
             else:
                 print("  --repalette: performing a statistical palette "
                       "shift; the output may drift as the art changes")

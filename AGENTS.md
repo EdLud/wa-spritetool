@@ -180,8 +180,11 @@ SpriteEditor writes).
   the comment rather than guessing.
 - Docstrings and prose follow the existing plain, precise tone.
 - CLI errors print `Error: ...` and return exit code 1; notes go to stderr.
-- Interactive prompts (e.g. borrowing defaults) must always have a flag that
-  answers them ahead of time for scripting (`--defaults` / `--no-defaults`).
+- Every interactive prompt carries a `Question` with a stable `key`, and any
+  key can be answered ahead of time with `--yes=KEY` / `--no=KEY`. That is
+  structural rather than a habit: a prompt reachable only from a terminal
+  cannot be reached from a window, and there was one of those.
+  `--defaults` / `--no-defaults` are shorthand for the `defaults.` group.
 - Windows paths matter: archive entry names use `\` separators, and the tool
   is expected to run on Windows (no find(1) assumptions; CRLF in generated
   `.spd`/`.inf` files to match SpriteEditor).
