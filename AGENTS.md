@@ -191,6 +191,23 @@ SpriteEditor writes).
 - Output folders are named after the source archive so several archives can
   share one output directory without overwriting each other.
 
+## Multiple agents work in this repo
+
+More than one AI agent (and the author) edits this codebase, often in
+parallel sessions that share no context. Work so the next agent — which may
+not be you — can pick up cleanly:
+
+- Re-read a file before editing it rather than trusting memory from earlier
+  in the session; another agent may have changed it since.
+- At session start, `git log` and `git status` show what changed recently.
+  Uncommitted work from another session may be sitting in the tree — do not
+  overwrite or revert it without asking.
+- Keep `SPR_FORMAT.md`, the README and code comments current with what the
+  code actually does. These are the shared memory between agents; a stale
+  comment sends the next agent down a wrong path.
+- Record reverse-engineered findings and the evidence for them in
+  `SPR_FORMAT.md`, not just in the conversation that found them.
+
 ## Security and legal considerations
 
 - **No game data in the repo.** `*.dir` files are gitignored globally except
@@ -204,5 +221,4 @@ SpriteEditor writes).
 - `pack-terrain` writes into the user's build folder (borrowed defaults,
   `object_settings.txt`, migrated `.inf` files). Deleting or overwriting
   user files there must stay behind explicit prompts or flags.
-- License: GPL-3.0 per the README (note: no LICENSE file is currently
-  present in the repo).
+- License: GPL-3.0; see `LICENSE`.
