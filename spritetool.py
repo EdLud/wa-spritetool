@@ -1599,8 +1599,7 @@ def _caption_colours(palette: Sequence[Tuple[int, int, int]],
 
 def plan_shared_palette(sources: Dict[str, str],
                         budget: int = MAX_SHARED_COLOURS,
-                        borrowed: Sequence[str] = (),
-                        keep_caption: bool = False
+                        borrowed: Sequence[str] = ()
                         ) -> Tuple[Optional[List[Tuple[int, int, int]]], List[str]]:
     """Cut one palette for every PNG in a terrain.
 
@@ -1669,25 +1668,19 @@ def plan_shared_palette(sources: Dict[str, str],
     if not png_names:
         return None, notes
 
-    # The debris caption, kept so select-by-colour can lift it off -- but only
-    # on the run that lends the strip, and only out of room the author is not
-    # using. See DEBRIS_LABEL_COLOURS and _caption_colours.
-    keep = set(DEBRIS_LABEL_COLOURS) if keep_caption else set()
-    spare = {c: n for c, n in counts.items() if c not in keep}
-    room = budget - len(keep)
+    spare = counts
+    room = budget
     lent_note = (f', and {len(lent)} default(s) fitted to it afterwards'
                  if lent else '')
-    if keep:
-        lent_note += (f'; {len(keep)} kept exactly for the debris caption')
     pictures = len(png_names) - len(lent)
     if len(spare) <= room:
-        chosen = sorted(keep | set(spare))
+        chosen = sorted(spare)
         notes.append(f'{pictures} picture(s) share {len(chosen)} colours, '
                      f'inside the {budget} budget; nothing '
                      f'reduced{lent_note}')
         return chosen, notes
 
-    chosen = sorted(keep | set(cut_palette(spare, room)))
+    chosen = sorted(cut_palette(spare, room))
     notes.append(f'{len(spare)} colours across {pictures} picture(s) cut to '
                  f'{len(chosen)}, inside the {budget} the terrain may '
                  f'hold{lent_note}')
@@ -2519,16 +2512,23 @@ def _recolour_borrowed(source_dir: str, borrowed: Dict[str, str],
                 continue                 # a .bmp default is already indexed
             swap = {}
             if os.path.basename(dest).lower().startswith('debris'):
-                # Where the caption's own colours did not survive the cut --
-                # the author's art needed the whole budget -- letter the strip
-                # in two the palette does have, chosen not to collide with the
-                # debris art. Otherwise select-by-colour cannot lift it off.
-                if any(c not in palette for c in DEBRIS_LABEL_COLOURS):
-                    art = [c for c in png_colour_counts(blob)
-                           if c not in DEBRIS_LABEL_COLOURS]
-                    pair = _caption_colours(palette, art)
-                    if pair:
-                        swap = dict(zip(DEBRIS_LABEL_COLOURS, pair))
+                # The strip is lettered so an author can tell the frames
+                # apart, and cleared with GIMP's select-by-colour once they
+                # have. That needs the caption to stay distinct from the art
+                # under it, not to stay any particular colour -- so it is
+                # relettered from the terrain's own palette rather than held
+                # out of it.
+                #
+                # Reserving its blue instead was worse than doing nothing:
+                # with a palette cut from one brown object it was the only
+                # blue in the terrain, and every blue-ish pixel in every other
+                # lent picture landed on it. The preset land texture came out
+                # streaked with the caption colour.
+                art = [c for c in png_colour_counts(blob)
+                       if c not in DEBRIS_LABEL_COLOURS]
+                pair = _caption_colours(palette, art)
+                if pair:
+                    swap = dict(zip(DEBRIS_LABEL_COLOURS, pair))
             w, h, pixels, pal, _ = read_png(
                 blob, palette=list(palette), recolour=swap)
             out = Image.new('RGBA', (w, h))
@@ -4336,15 +4336,8 @@ def main():
             print(f"  reading {len(shared_palette)} colours from "
                   f"{PALETTE_NAME}")
         elif terrain:
-            # The caption is only worth keeping on the run that lends the
-            # strip: after that the author has either cleared it or decided
-            # to live with it, and holding two colours for a decision already
-            # made spends their budget on nothing.
-            lends_debris = any(n.lower().startswith('debris')
-                               for n in borrowed)
             shared_palette, palette_notes = plan_shared_palette(
-                picture_sources, borrowed=lent_names,
-                keep_caption=lends_debris)
+                picture_sources, borrowed=lent_names)
             for note in palette_notes:
                 print(f'  note: {note}', file=sys.stderr)
             if borrowed and shared_palette:
