@@ -3371,7 +3371,7 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
                 odd.append(f'{obj} ({got[0]}x{got[1]})')
     if odd:
         notes.append(f'{len(odd)} compressed object(s) are not a multiple of 4 '
-                     f'wide, which the game draws corrupt: '
+                     f'wide, which has been seen to draw corrupt: '
                      f'{", ".join(odd[:4])}'
                      + (f' and {len(odd) - 4} more' if len(odd) > 4 else ''))
     return refuse, notes
@@ -3439,28 +3439,36 @@ def _pad_to_multiple_of_four(width: int, height: int, pixels: bytes
                              ) -> Tuple[int, int, bytes, bool]:
     """Grow a picture with transparent pixels until its width divides by 4.
 
-    The guide says "the height and width values must be divisible by 4 if you
-    wish to use .IMG compression... the object will appear corrupt in-game",
-    and a terrain of objects 117, 65 and 338 wide came out with every one of
-    them mangled while those 124, 40 and 108 wide were perfect. Note that the
-    evidence there is entirely about width -- the heights were never varied.
+    The guide asks for both dimensions -- "the height and width values must be
+    divisible by 4 if you wish to use .IMG compression ... the object will
+    appear corrupt in-game likely due to a bug in Sprite Editor" -- and names
+    its own culprit in the last clause. That is a bug in one 2000-era
+    authoring tool, not a rule of the format or of the game, so it binds art
+    that goes back through SpriteEditor and not art this tool writes.
 
-    The height half of the guide's sentence does not survive the corpus. Of
-    3,120 compressed images across 143 installed terrains, not one is an odd
-    width -- that rule is real and absolute -- while 690 are an odd height,
-    including 670 core assets like Cosmic's 64x49 bridge-r. Among uncompressed
-    objects odd widths are ordinary, 32 of 68, so it is compression that
-    constrains the width, as a row-based codec would.
+    Our own encoder has no such bug in either dimension: random pictures
+    round-trip exactly at every height from 1 to 19 and at widths of 105, 117,
+    65, 338 and 103. So this padding is deference to SpriteEditor, not a
+    correctness fix, and the narrower it is the better.
 
-    Checked in the game rather than argued from the corpus alone: two builds
-    of Cosmic differing only in this object, one 104x98 and one padded to
-    104x100, both load and draw correctly. The padding is not harmless
-    though -- an object is placed by its bottom edge, and the two added rows
-    visibly change where the game spawns it.
+    The width half is kept because it is observed rather than deduced: a
+    terrain of objects 117, 65 and 338 wide came out mangled in-game while
+    those 124, 40 and 108 wide were perfect, and of 3,120 compressed images
+    across 143 installed terrains not one is an odd width. Among uncompressed
+    objects odd widths are ordinary, 32 of 68, so something in the path from a
+    compressed .img to the screen does depend on it.
 
-    The author's own build script pads both dimensions with ImageMagick, and
-    he still shipped this object at 104x98, so the script cannot have been
-    what produced the archive.
+    The height half is dropped. 690 of those same images are an odd height,
+    670 of them core assets like Cosmic's 64x49 bridge-r, and they draw
+    correctly. Checked in the game rather than argued from the corpus alone:
+    two builds of Cosmic differing only in obj-rock1, one 104x98 and one
+    padded to 104x100, both load and draw. The padding was not harmless,
+    though -- an object is placed by its bottom edge, so the two added rows
+    visibly changed where the game spawned it.
+
+    King-Gizzard's own build script pads both dimensions with ImageMagick and
+    he still shipped that object at 104x98, so it cannot have been what
+    produced the archive.
 
     The new pixels go on the right, where they cost nothing.
     """

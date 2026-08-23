@@ -257,16 +257,31 @@ def _check_listing_needs_icon(no_numpy=False):
 def check_padding(no_numpy=False):
     """Compressed art is widened to a multiple of 4, and left alone otherwise.
 
-    The guide asks for both dimensions, but the corpus only supports the
-    width: of 3,120 compressed images across 143 installed terrains none is an
-    odd width and 690 are an odd height. Padding the height moved art inside
-    its own box -- an object is placed by its bottom edge -- which changed
-    where the game spawned it.
+    The guide asks for both dimensions and blames "a bug in Sprite Editor",
+    which binds art going back through that tool rather than the format. Of
+    3,120 compressed images across 143 installed terrains none is an odd width
+    and 690 are an odd height, so the width half is kept and the height half
+    dropped. Padding the height moved art inside its own box -- an object is
+    placed by its bottom edge -- which changed where the game spawned it.
     """
     sys.path.insert(0, ROOT)
     import spritetool as st
 
     good = True
+    # Our encoder has no such bug in either dimension, which is what makes the
+    # padding deference to SpriteEditor rather than a correctness fix.
+    palette = bytes([0, 0, 0] + [(i * 37) % 256 for i in range(45)])
+    bad = []
+    for w, h in ((104, 98), (105, 98), (117, 50), (65, 33), (338, 7), (8, 3)):
+        pixels = bytes((x * 7 + y * 13) % 16 for y in range(h) for x in range(w))
+        blob = st.encode_image(w, h, pixels, palette, compress=True)
+        back = st.ImageFile(blob)
+        if not (back.parse() and (back.width, back.height) == (w, h)
+                and bytes(back.pixels) == pixels):
+            bad.append(f'{w}x{h}')
+    good = say(not bad, 'compresses at any size',
+               'exact' if not bad else 'failed: ' + ', '.join(bad)) and good
+
     w, h, out, grew = st._pad_to_multiple_of_four(104, 98, bytes(104 * 98))
     good = say((w, h, grew) == (104, 98, False), 'odd height left alone',
                f'104x98 -> {w}x{h}') and good
