@@ -159,7 +159,9 @@ MUST haves:
 Default:
 
 ![landtexture](presets/text.png)
-- a soil texture (`soil.png`). Dimensions: 256 x 256 
+- a soil texture (`soil.png`). Dimensions: 256 x 256. The default is an empty
+  image, which shows the background through destroyed land rather than
+  someone else's dirt.
 - a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide).
 
 Default:
@@ -171,18 +173,25 @@ Default:
 Default:
 
 ![bridge-l](presets/bridge-l.png) ![bridge](presets/bridge.png) ![bridge-r](presets/bridge-r.png) 
-- an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, 17 colours maximum.
+- an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64. The guide asks for "17 colours", meaning 16 drawn ones
+and transparency; more than that works here -- what an icon cannot have is a
+compressed palette that is not a multiple of four entries, which pads before
+the pixels and takes down the land generator screen, so the tool rounds the
+palette up by repeating a colour already in it.
 
 Default:
 
 ![icon](presets/icon.png)
 
-- a soil texture (`soil.png`) Dimensions: 256 x 256
-Default is an empty image.
-
 Additionally it CAN have
 
-- a non-animated background layer (`_back.png`) Dimensions: 640 x 160
+- falling debris (`debris.png`). The guide calls this required; it is not. A
+  terrain packs and plays without one, only with an emptier sky.
+- a non-animated background layer (`_back.png`) Dimensions: 640 x 160.
+  `back.png` names the same layer by the game's other route, straight into
+  video memory, and that one cannot be compressed -- a compressed `back.spr`
+  crashes the game. `_back` goes through the sprite loader, compresses, and
+  overrides `back` where a terrain has both, so it is the one lent here.
 
 Default:
 
@@ -202,46 +211,47 @@ Default:
 
 
 
-### Build a terrain 5 - PNG Sources and recolouring
+### Build a terrain 5 - Colour and indexing
 
-A `.png` may stand in for the indexed `.bmp` anywhere, so art need not be
-indexed by hand first, although this is still the recommended approach. 
+Art can be a `.png` or a `.bmp`, indexed or not. What the tool does with it
+depends on the picture, not on the file's name.
 
-The converting of a non-indexed `.png` to the indexed `.bmp` works like following:
+**Transparency is an index, not a channel.** The archive has no alpha: index 0
+is the transparent slot, and whatever colour sits there the game draws nothing.
+So every source is reduced to that form:
 
 - alpha is **thresholded at 128** -- at or above it a pixel is drawn, below it
-  the pixel becomes index 0, the transparent one
-- colours are reduced by median cut, and the mean distance they moved is
-  printed, out of the 441 that spans the RGB cube
+  the pixel becomes index 0. A half-transparent pixel is dropped, not blended,
+  and the count is reported
+- a source that **paints with index 0** is re-indexed rather than losing those
+  pixels: everything shifts up one, the freed slot is blacked out, and a note
+  names the colour that was displaced
 
-The reduction is done **once for the whole terrain**, not per picture. 
-`pack-terrain` reads all the art first, cuts one palette across it, and
-maps every PNG onto that. Already-indexed sources are packed exactly as
-authored and their colours counted against the budget, leaving the rest for
-the PNGs.
+That second rule reads the picture rather than its extension, so the same art
+packs the same way saved either way.
 
-A terrain already inside the budget converts losslessly. Where both a `.bmp`
-and a `.png` exist the `.bmp` wins, being already indexed and so authored
-exactly.
+**Colour is where `.bmp` and `.png` still differ**, and deliberately. A `.bmp`
+is taken as already authored: its colours are kept exactly and counted against
+the terrain's budget. Anything else is fitted to a palette the tool cuts.
 
-Index 0 is the transparent slot: whatever colour sits there, the game draws
-nothing. An indexed source that paints with index 0 is re-indexed rather than
-losing those pixels -- everything shifts up one and the freed slot is blacked
-out, with a note saying which colour was displaced. This goes by what the
-picture holds, not by its extension, so the same art packs the same way saved
-either way.
+The cut is made **once for the whole terrain**, not per picture. The game
+aggregates every picture's palette into one table and the guide caps it at 112
+colours, so `pack-terrain` reads all the art first, cuts one palette across
+what is left of the budget, and maps every non-`.bmp` picture onto it. The mean
+distance the colours moved is printed, out of the 441 that spans the RGB cube;
+a terrain already inside the budget converts losslessly.
 
-`--write-palette` puts a `palette.png` in the build folder, the terrain's
-colours as a grid of swatches, and says how many of the 112 are spent. 
+Where both a `.bmp` and a `.png` of the same name exist the `.bmp` wins.
 
-`--no-palette` skips the shared cut entirely. Each picture keeps the colours
-it was authored with, and an indexed source is packed exactly as it stands --
-for an author who has already fitted their art to a palette they chose and
-does not want it nudged to make room for the rest of the terrain. A terrain 
-packed with this option may hold more than 112 colours.
+| Flag | What it does to the colours |
+|---|---|
+| `--write-palette` | writes `build/palette.png`, the terrain's colours as swatches, and says how many of the 112 are spent |
+| `--read-palette` | reads `build/palette.png` and fits **every** picture to it, `.bmp` included |
+| `--no-palette` | cuts nothing; each picture keeps its own colours, and the 112 becomes yours to stay inside |
 
-`--read-palette` reads from `build/palette.png` and applies the colour 
-to all .png AND .bmp files
+`--read-palette` is the one that overrides the rule above: a palette handed
+over outright is meant to be the whole of the terrain's colours, so an indexed
+`.bmp` is fitted to it like everything else.
 
 ### Object settings
 
