@@ -145,6 +145,22 @@ class _Row(QTreeWidgetItem):
         return mine < theirs
 
 
+def _in_budget(name):
+    """Whether a picture's colours count against the terrain's 112.
+
+    Two in a build folder do not. The icon is not an archive entry and the
+    engine does not aggregate it -- archive_problems and the palette sheet
+    both skip it -- and palette.png is something the tool wrote about the
+    colours rather than any of them. Counting either inflates the total
+    against the one number it is meant to be compared with.
+    """
+    low = os.path.basename(name).lower()
+    if low == st.PALETTE_NAME.lower():
+        return False
+    return not any(low == f'icon{suffix}'
+                   for suffix in ('.png', '.img.png', '.bmp', '.img.bmp'))
+
+
 def _picture_colours(path):
     """The distinct drawn colours in a picture, or None if it is not one.
 
@@ -708,19 +724,26 @@ class Window(QMainWindow):
             if found is not None:
                 item.setText(2, f'{len(found):,}')
                 item.setData(2, Qt.UserRole, len(found))
-                shared |= found
+                # Shown for every picture, totalled only for the ones the
+                # budget is about.
+                if _in_budget(path):
+                    shared |= found
             if i % 8 == 7:
                 QApplication.processEvents()
 
         # The folder's own total is not the sum of the column: the budget
         # counts a colour once however many pictures draw it. Worth showing,
-        # since a column adding to well over 112 otherwise looks alarming --
-        # and it is the number the repalette question turns on.
+        # since a column adding to well over 112 otherwise looks alarming.
+        #
+        # This counts the art as drawn, which is not the number the packed
+        # archive ends up with -- each picture is reduced to a palette of its
+        # own on the way in, so a folder of 4,000 colours can pack to a few
+        # hundred. It is the one the author can do something about.
         if not rows:
             return
         over = (f' -- over the {st.MAX_SHARED_COLOURS}'
                 if len(shared) > st.MAX_SHARED_COLOURS else '')
-        self._tabs.setTabText(0, f'Folder ({len(shared)} colours{over})')
+        self._tabs.setTabText(0, f'Folder ({len(shared):,} colours{over})')
 
     def _show_palette(self, path):
         if os.path.exists(path):
