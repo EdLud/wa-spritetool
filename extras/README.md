@@ -54,7 +54,7 @@ repo ships no game data.
 **Animation** — `make-grass-wind` (blades swaying), `make-back2` (a reef
 swaying), `make-bubbles` (bubbles rising), `make-flies` and `make-fly-bursts`
 (insects milling and scattering), `make-anim-test` (rising circles, to check
-a strip reads at all).
+a strip reads at all). All six are covered by `preview_extras_gifs.py`.
 
 **Texture** — `make-seamless-texture` (tile a photograph without a seam),
 `make-dendrites` and `make-coral` (grown patterns).

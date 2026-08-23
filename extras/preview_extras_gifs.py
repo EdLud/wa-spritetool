@@ -39,6 +39,12 @@ TOOLS = {
         "args": ["-n", "40", "-N", "25", "-W", "200", "-H", "120"],
         "gif": "native",
     },
+    "make-back2": {
+        # A reef swaying. Slow: every frame composites four depth bands of
+        # cutouts, so a preview takes a handful rather than its real 30.
+        "args": ["-n", "6"],
+        "gif": "native",
+    },
     "make-grass-wind": {
         "args": ["-n", "30", "-W", "256", "-H", "120"],
         "gif": "native",

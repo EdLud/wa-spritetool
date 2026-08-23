@@ -40,6 +40,7 @@ floating with nothing to hide the gap unless it is pushed down first.
 import math
 import os
 import random
+import sys
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageOps
@@ -711,3 +712,89 @@ def make_back2_ruler_layer():
         return None
     from make_front import make_front_ruler   # lazy: see BACK2_RULER above
     return make_front_ruler(BACK2_W, BACK2_H, name="back2.spr")
+
+
+# ---------------------------------------------------------------- running --
+# Split out of build_coral.py, which passed in its own object pool, palette
+# and objects.txt. Nothing here has those, so a run of this file stands them
+# up from the cutouts in assets/: every one is a band, coloured by a ramp
+# rather than by a terrain's palette. That is enough to see the sway, which
+# is what a preview is for.
+
+def _demo_config(asset_dir):
+    """objects.txt as make_back2 wants it, built from whatever is in assets/.
+
+    SWAY_EXCLUDE_SRC is emptied first. It lists the cutouts Coral Reef kept
+    OUT of its sway, and the ones bundled here are exactly those -- they were
+    copied for make_back2 to have something to work on, not because that
+    terrain swayed them. Left in place a demo run draws nothing at all.
+    """
+    SWAY_EXCLUDE_SRC.clear()
+    rows = []
+    for i, f in enumerate(sorted(os.listdir(asset_dir))):
+        if f.lower().endswith(('.png', '.bmp')):
+            rows.append({"name": os.path.splitext(f)[0], "src": f,
+                         "where": "floor"})
+    return rows
+
+
+def _demo_fill(name, _pool={}):
+    """A colour per object, spread around the wheel so bands stay distinct."""
+    if name not in _pool:
+        _pool[name] = len(_pool)
+    import colorsys
+    h = (_pool[name] * 0.37) % 1.0
+    r, g, b = colorsys.hsv_to_rgb(h, 0.55, 0.85)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Build back2.spr: a reef swaying in the current.")
+    ap.add_argument("-o", "--out", default="back2.spr.png",
+                    help="output PNG strip (default ./back2.spr.png)")
+    ap.add_argument("-a", "--assets", default=None,
+                    help="folder of cutouts to sway (default ./assets)")
+    ap.add_argument("-n", "--frames", type=int, default=BACK2_FRAMES)
+    ap.add_argument("--gif", nargs="?", const=True, default=None,
+                    help="also write an animated preview GIF")
+    a = ap.parse_args()
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    assets = a.assets or os.path.join(here, "assets")
+    if not os.path.isdir(assets):
+        raise SystemExit(f"no cutouts to sway: {assets} is not a folder")
+
+    rows = _demo_config(assets)
+    if not rows:
+        raise SystemExit(f"no pictures in {assets}")
+
+    frames = []
+    for i in range(a.frames):
+        frames.append(make_back2(assets, _demo_fill, lambda c: c,
+                                 lambda: rows, frame=i))
+    sheet = Image.new("RGBA", (BACK2_W, BACK2_H * len(frames)), (0, 0, 0, 0))
+    for i, fr in enumerate(frames):
+        sheet.paste(fr, (0, i * BACK2_H))
+    sheet.save(a.out)
+    print(f"wrote {a.out} ({BACK2_W}x{BACK2_H * len(frames)}, "
+          f"{len(frames)} frames of {BACK2_W}x{BACK2_H})")
+
+    spd = a.out[:-4] + ".spd" if a.out.lower().endswith(".png") else None
+    if spd:
+        with open(spd, "w", newline="") as fh:
+            fh.write(f"frames = {len(frames)}\r\nheight = {BACK2_H}\r\n"
+                     f"width = {BACK2_W}\r\nframerate = 0\r\nflags = 1\r\n")
+
+    if a.gif:
+        path = a.gif if isinstance(a.gif, str) else a.out[:-4] + ".gif"
+        sys.path.insert(0, os.path.dirname(here))
+        import gif as gifmod
+        gifmod.save(sheet, path, len(frames), BACK2_H, duration=50,
+                    bed=(12, 24, 40))
+        print(f"wrote {path}")
+
+
+if __name__ == "__main__":
+    main()
