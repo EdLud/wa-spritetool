@@ -214,10 +214,9 @@ Default:
 
 ### Build a terrain 5 - Colour and indexing
 
-Art can be a `.png` or a `.bmp`, indexed or not. What the tool does with it
-depends on the picture, not on the file's name.
+Art can be a `.png` or a `.bmp`, indexed or not. Transparency will be treated as index 0 automatically.
 
-**Transparency is an index, not a channel.** The archive has no alpha: index 0
+**Transparency is an index, not a colour.** The archive has no alpha: index 0
 is the transparent slot, and whatever colour sits there the game draws nothing.
 So every source is reduced to that form:
 
@@ -241,6 +240,12 @@ means moving them, and they move differently every time the art changes. So
 `pack-terrain` offers rather than does it. Say no and it packs your colours as
 they are, telling you the total. Say yes and it fits everything to one palette.
 `--repalette` says yes for you.
+
+Of those 112, the guide suggests keeping the foreground to 96 and leaving 16
+for the sky gradient and background. Converting a map to PNG swaps those for
+stock ones, which need colours to be drawn with -- spend all 112 on objects
+and the replacement sky may come out banded. `pack-terrain` says so when it
+happens, and builds either way: 22 of the 146 stock terrains spend more.
 
 ### Fixing a palette
 

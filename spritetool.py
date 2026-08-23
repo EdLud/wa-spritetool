@@ -1299,6 +1299,9 @@ MAX_DRAWN_COLOURS = 127
 # be shared by all of your terrain objects. Your terrain won't load if it goes
 # beyond 112 colours." The median across a stock install is exactly 112.
 MAX_SHARED_COLOURS = 112
+# What the guide suggests the foreground keep to, so the background elements
+# have 16 of their own for a PNG map conversion to redraw the sky with.
+MAX_FOREGROUND_COLOURS = 96
 
 
 def png_colour_counts(data: bytes,
@@ -2001,6 +2004,11 @@ CORE_IMG_DIMS = {
 # at that size, where gradient.img really does vary -- 137 are 8x916 and 6 are
 # 8x900 -- so that one stays advice.
 CORE_IMG_DIMS_REQUIRED = ('text.img', 'soil.img')
+# What the guide calls the background elements: the sky gradient, the debris
+# and the background layers. Everything else a terrain draws is foreground.
+BACKGROUND_ENTRIES = frozenset((
+    'gradient.img', 'debris.spr', 'back.spr', '_back.spr', 'back2.spr',
+    'front.spr'))
 CORE_IMG_WIDTHS = {
     'grass.img': GRASS_WIDTH,
     'bridge.img': BRIDGE_WIDTH,
@@ -3241,21 +3249,48 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
     # Everything the terrain draws, background sprites included, but not the
     # gfx0/gfx1 overrides or the icon -- see plan_shared_palette.
     shared = set()
+    foreground = set()
     for n, data in entries.items():
         if not data or '\\' in n:
             continue
         if n.lower() == 'icon.img':
             continue
+        cols: set = set()
         if data[:4] == ImageFile.SIGNATURE:
             im = ImageFile(data)
             if im.parse():
-                shared.update(bytes(im.palette[i * 3:i * 3 + 3])
-                              for i in range(im.ncolours))
+                cols = {bytes(im.palette[i * 3:i * 3 + 3])
+                        for i in range(im.ncolours)}
         elif data[:4] == SpriteFile.SIGNATURE:
             sp = SpriteFile(data)
             if sp.parse():
-                shared.update(bytes(sp.palette[i * 3:i * 3 + 3])
-                              for i in range(sp.ncolours))
+                cols = {bytes(sp.palette[i * 3:i * 3 + 3])
+                        for i in range(sp.ncolours)}
+        shared |= cols
+        if n.lower() not in BACKGROUND_ENTRIES:
+            foreground |= cols
+
+    # The guide's advice for terrains that will be converted to PNG maps: the
+    # foreground on 96 colours, the background elements on those plus 16 of
+    # their own. Converting replaces the sky gradient and background with
+    # stock ones, which need colours to be drawn with -- spend all 112 on the
+    # foreground and "you can expect an ugly looking sky gradient".
+    #
+    # Advice, not a rule, and softer than the guide makes it sound: 22 of the
+    # 146 terrains in a stock install spend more than 96 on the foreground,
+    # and one that spends the whole 112 converts to PNG perfectly well. So it
+    # is worth saying once and not worth insisting on. Team17's own follow it
+    # exactly -- -Beach, -Desert, -Farm, -Forest, -Hell and Art all come to 96
+    # foreground and 16 more for the background, transparency not counted.
+    if len(foreground) > MAX_FOREGROUND_COLOURS:
+        notes.append(
+            f'{len(foreground)} foreground colours. The guide suggests '
+            f'{MAX_FOREGROUND_COLOURS}, keeping '
+            f'{MAX_SHARED_COLOURS - MAX_FOREGROUND_COLOURS} back for the sky '
+            f'gradient so a map converted to PNG can redraw it; 22 of the 146 '
+            f'stock terrains spend more, so this is advice rather than a '
+            f'rule')
+
     if len(shared) > MAX_SHARED_COLOURS:
         notes.append(f'{len(shared)} unique colours across the terrain; the '
                      f'guide budgets {MAX_SHARED_COLOURS} and warns the '
