@@ -230,9 +230,18 @@ So every source is reduced to that form:
 That second rule reads the picture rather than its extension, so the same art
 packs the same way saved either way.
 
-**Colour is where `.bmp` and `.png` still differ**, and deliberately. A `.bmp`
-is taken as already authored: its colours are kept exactly and counted against
-the terrain's budget. Anything else is fitted to a palette the tool cuts.
+**Colour is where `.bmp` and `.png` still differ.** A `.bmp` is taken as
+already authored -- its colours kept exactly and counted against the budget --
+where anything else is fitted to a palette the tool cuts. That is a rule about
+the container rather than the art, and an indexed `.png` has every bit as good
+a claim to being authored, so do not lean on it: **if you have fitted your art
+to a palette you chose, pass `--no-palette`**, which keeps every picture's own
+colours whatever it was saved as.
+
+In practice the difference is small. A cut made over art that is already
+indexed largely rediscovers the same palette: the 35 indexed PNGs of one
+terrain here come through it with no colour shift at all, and the indexed
+BMPs of another shift by 0.8 of 441 at worst.
 
 The cut is made **once for the whole terrain**, not per picture. The game
 aggregates every picture's palette into one table and the guide caps it at 112
@@ -247,7 +256,7 @@ Where both a `.bmp` and a `.png` of the same name exist the `.bmp` wins.
 |---|---|
 | `--write-palette` | writes `build/palette.png`, the terrain's colours as swatches, and says how many of the 112 are spent |
 | `--read-palette` | reads `build/palette.png` and fits **every** picture to it, `.bmp` included |
-| `--no-palette` | cuts nothing; each picture keeps its own colours, and the 112 becomes yours to stay inside |
+| `--no-palette` | cuts nothing; every picture keeps its own colours whatever its format, and the 112 becomes yours to stay inside |
 
 `--read-palette` is the one that overrides the rule above: a palette handed
 over outright is meant to be the whole of the terrain's colours, so an indexed
