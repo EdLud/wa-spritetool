@@ -180,11 +180,11 @@ Default:
 
 Additionally it CAN have
 
-- falling debris (`debris.png`). 
+- falling debris (`debris.png`). Default Dimensions: 60 × 7680
 
 Default:
 
-![debris](media/debris.gif) Default Dimensions: 60 × 7680
+![debris](media/debris.gif) 
 
 - an animated foreground layer (`front.png`) Default Dimensions: 1024 × 32000
   terrain packs and plays without one, only with an emptier sky.
