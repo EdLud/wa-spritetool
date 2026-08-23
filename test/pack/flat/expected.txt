@@ -1,0 +1,4 @@
+# md5 of every file pack-terrain writes beside Level.dir.
+# Regenerate with test/make-pack-golden.sh; check with test/run.py.
+da076d8aae829691fd50e2fb670c2b88  Level.dir
+c7181a17d80f89552935f990938470ea  TEXT.img

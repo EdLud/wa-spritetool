@@ -1,5 +1,7 @@
 # test
 
+Run everything with `python3 test/run.py`. Non-zero if anything moved.
+
 One archive from each game, and what this tool makes of it. If a change to the
 decoder alters any of these, it changed how a real file is read.
 
@@ -8,6 +10,7 @@ test/
   wa/            Worms Armageddon
   wwp online/    Online Worms (2002-03-23 build)
   wwp aqua/      World Party Aqua
+  pack/          terrains built from source art
 ```
 
 Each holds `Water.dir` as the game ships it, and `decompressed/` as this tool
@@ -54,3 +57,28 @@ The three are not interchangeable. Aqua writes `LND\x1B` where the others
 write `LND\x1A`, its sprite bank is arranged differently, and Online Worms
 sits between the two -- so a change that looks right against one can still be
 wrong against another. That is the reason for keeping all three.
+
+## Building a terrain
+
+`pack/flat/` and `pack/wide/` are the other direction: source art that gets
+packed, rather than an archive that gets read. Nothing covered this before --
+every fixture above reads a `.dir`, none built one -- so packing was checked by
+hand each time and nothing checked it afterwards.
+
+`flat` draws 12 colours. That is inside the 112 a terrain may hold, so its own
+colours become the palette, no quantiser runs, and the result is the same every
+time: it is compared by hash against `flat/expected.txt`.
+
+```bash
+./test/make-pack-golden.sh      # regenerate that hash
+```
+
+`wide` draws 7122 and has to be cut down. Pillow's median cut is stable for one
+Pillow and not a promise across versions, so hashing it would break on an
+upgrade rather than on a bug. It asserts what must be true instead: every
+required entry present, at most 112 colours in the archive, and the archive
+re-parses.
+
+Packing writes into the folder it is given -- borrowed presets, settings, art
+refitted in place -- so the runner copies a fixture before packing it. Nothing
+under `pack/` should ever be written to.

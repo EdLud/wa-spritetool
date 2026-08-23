@@ -102,7 +102,16 @@ investigation.
 
 ## Testing
 
-There is no unit-test framework. Verification is fixture-based, byte-for-byte:
+There is no unit-test framework. Verification is fixture-based, byte-for-byte.
+One command runs all of it:
+
+```bash
+python3 test/run.py               # everything
+python3 test/run.py --no-numpy    # again, on the pure-Python paths
+python3 test/run.py pack          # one group: decode|manifest|pack|colours
+```
+
+Non-zero if anything moved. What it covers:
 
 - `test/wa/`, `test/wwp online/`, `test/wwp aqua/` each hold a real
   `Water.dir` as the game ships it, plus `decompressed/` as this tool writes
@@ -129,6 +138,24 @@ There is no unit-test framework. Verification is fixture-based, byte-for-byte:
 
   Any movement in the manifest is a change in how a shipped terrain is read.
   The script extracts to `/tmp/cr_x` and `/tmp/cr_wx`.
+
+- `test/pack/flat/` and `test/pack/wide/` are terrains built from source art,
+  which nothing covered before: the fixtures above all read an archive, none
+  built one. `flat` draws 12 colours, inside the 112 a terrain may hold, so its
+  own colours are the palette, no quantiser runs, and the archive is compared
+  by hash against `expected.txt` (regenerate with `test/make-pack-golden.sh`).
+  `wide` draws 7122 and goes through Pillow's median cut, which is stable for
+  one Pillow and not a promise across versions, so it asserts what must be true
+  instead: every required entry present, at most 112 colours, and the archive
+  re-parses.
+
+  Packing writes into the folder it is given, so the runner copies a fixture to
+  a temp folder and packs the copy. `test/pack/**` is a pristine input.
+
+- The `colours` group checks numpy and pure Python agree. numpy is optional and
+  decides which path counts and maps pixels; the two return colours in
+  different orders, which feeds Pillow's median cut. It turns out not to change
+  the result, which is worth continuing to check rather than assuming.
 
 - After touching `extras/colors.py` or `extras/gif.py`, run
   `./extras/preview_extras_gifs.py` and look at the GIFs — a break there
