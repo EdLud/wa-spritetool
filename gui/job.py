@@ -105,6 +105,16 @@ def run(folder, out_dir, option_fields, answers, events, replies):
     sys.stderr = _Tee(events, 'err')
 
     def ask(question):
+        # Anything already settled is not asked again. The window decides some
+        # of these when the folder is dropped rather than when Pack is pressed,
+        # and _settled is what makes 'defaults.' stand for every question
+        # beneath it -- the same rule --defaults uses, borrowed rather than
+        # written out a second time here.
+        given = st._settled(answers, question.key)
+        if given is not None:
+            events.put(('out', f'{question.prompt} '
+                               f'[{"y" if given else "n"}, settled already]'))
+            return given
         events.put(('question', {
             'key': question.key,
             'prompt': question.prompt,

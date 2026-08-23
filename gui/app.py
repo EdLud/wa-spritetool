@@ -277,6 +277,8 @@ class Window(QMainWindow):
         self._folder = None
         self._out_dir = None
         self._job = None
+        #: Questions settled before packing, by key -- see _offer_setup.
+        self._answers = {}
 
         self._drop = DropZone(self.set_folder)
         self._pack = QPushButton('Pack to Level.dir')
@@ -374,8 +376,29 @@ class Window(QMainWindow):
 
     # ------------------------------------------------------------ folder --
 
-    def set_folder(self, folder):
+    def set_folder(self, folder, ask=True):
+        """Take `folder` as the terrain to pack.
+
+        `ask` says whether this call may open a dialog. It is a real property
+        of the call rather than a hook for tests: everything here otherwise
+        runs to completion, and a caller with no one at the keyboard -- the
+        selftest, or anything driving the window -- would simply block forever
+        on a modal box nobody can answer.
+        """
+        # The name is the only thing that says a folder was meant to be a
+        # terrain: everything a terrain needs can be stood in for, and a
+        # folder holding one picture is a legitimate starting point, so there
+        # is nothing in the contents to test. Refused here rather than after
+        # the packing button, where it would read as the pack having failed.
+        refuse = st._terrain_needs(folder)
+        if refuse:
+            if ask:
+                QMessageBox.warning(self, 'Not a build folder', refuse)
+            self._say('err', refuse)
+            return
+
         self._folder = folder
+        self._answers = {}
         self._drop.show_folder(folder)
         self._pack.setEnabled(True)
         if self._out_dir is None:
@@ -389,6 +412,84 @@ class Window(QMainWindow):
             self._set_out(os.path.join(parent, f'{name} packed'))
         self._load_folder(folder)
         self.statusBar().showMessage(folder)
+        if ask:
+            self._offer_setup(folder)
+
+    def setup_needed(self, folder):
+        """Required pieces this folder has not got, or [] if it is settled.
+
+        Separate from the dialog so the decision can be looked at without a
+        window in the way -- and so nothing has to open a modal box to find
+        out whether one is warranted.
+        """
+        if st.read_settings(folder) is not None:
+            return []                 # settled on an earlier run
+        if not st.default_sources(st.REQUIRED_ASSETS):
+            return []                 # nothing to lend, so nothing to offer
+        return [p for p in st.REQUIRED_ASSETS
+                if (not st._has_icon(folder) if p == st.DEFAULT_ICON
+                    else not self._holds(folder, p))]
+
+    def _offer_setup(self, folder):
+        """Ask about borrowing art now, not when Pack is pressed.
+
+        The tool offers its own art for whatever a folder has not got, once,
+        on the folder's first pack. On a command line that arrives as a run of
+        questions and reads fine. Behind a button called "Pack to Level.dir"
+        it does not: pressing it should pack, not start an interview about
+        setting the folder up.
+
+        So the same decision is taken here, at the point the folder arrives,
+        and passed to the pack as a settled answer. `defaults.` is the group
+        the individual questions live under -- answering it is exactly what
+        --defaults does.
+        """
+        lacking = self.setup_needed(folder)
+        if not lacking:
+            return
+
+        pretty = ', '.join(sorted({p.split('.')[0] for p in lacking}))
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        # The question goes in setText, not the title: macOS does not show a
+        # title on a message box at all, so a window titled with the question
+        # and a body of detail reads there as detail with no question.
+        box.setWindowTitle('spritetool')
+        box.setText('Set this folder up as a terrain?')
+        box.setInformativeText(
+            f'It has no {pretty}.\n\n'
+            f'A terrain needs them. spritetool ships plain ones it can copy '
+            f'in for you to draw over, written into this folder. You are only '
+            f'asked once.\n\n'
+            f'Without them the folder cannot be packed until you supply your '
+            f'own.')
+        yes = box.addButton('Copy them in', QMessageBox.YesRole)
+        box.addButton('Leave it alone', QMessageBox.NoRole)
+        box.setDefaultButton(yes)
+        box.exec()
+
+        took = box.clickedButton() is yes
+        self._answers['defaults.'] = took
+        self._say('out', f'{"borrowing" if took else "not borrowing"} '
+                         f'defaults for: {pretty}')
+
+    @staticmethod
+    def _holds(folder, piece):
+        """Whether the folder has a source for one entry, by any spelling.
+
+        Through split_picture rather than by joining extensions here: it is
+        what decides that text.png and text.img.bmp name the same entry, and
+        a second opinion about that would eventually disagree with the packer
+        about whether a folder is missing something.
+        """
+        want = piece.rsplit('.', 1)[0].lower()
+        for f in os.listdir(folder):
+            if f.lower() == piece.lower():
+                return True                      # an already-built .img/.spr
+            split = st.split_picture(f)
+            if split and split[0].lower() == want:
+                return True
+        return False
 
     def _set_out(self, path):
         self._out_dir = path
@@ -480,7 +581,7 @@ class Window(QMainWindow):
         self._job.cancelled.connect(
             lambda: self.statusBar().showMessage('Cancelled'))
         self._job.finished.connect(self._settle)
-        self._job.start(self._folder, self._out_dir, options, {})
+        self._job.start(self._folder, self._out_dir, options, self._answers)
 
     def _say(self, stream, text):
         if not text.strip():
@@ -584,10 +685,15 @@ def main(argv=None):
     if selftest:
         # Build every widget, touch the folder-loading path, and leave. Enough
         # to catch an import that is not bundled or a signal wired to nothing.
+        #
+        # ask=False because there is nobody to answer: set_folder would offer
+        # to set the fixture up and block on a modal box until it was killed.
+        # The decision behind that dialog is still checked, just without one.
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         fixture = os.path.join(here, 'test', 'pack', 'flat', 'build')
         if os.path.isdir(fixture):
-            window.set_folder(fixture)
+            window.set_folder(fixture, ask=False)
+            print(f'setup needed: {len(window.setup_needed(fixture))} piece(s)')
         app.processEvents()
         print('gui selftest ok')
         return 0

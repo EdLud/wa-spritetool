@@ -4324,6 +4324,15 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
         # Nothing to author: the folder is the input. A Level.dir.txt in
         # it still wins, so a build that has one keeps its exact order.
         source_dir = os.path.abspath(target)
+        if terrain:
+            # Before the listing branch, not inside the scanned one. The name
+            # is the only thing that says a folder was meant to be a terrain
+            # -- every asset can be stood in for, and a folder holding one
+            # picture is a legitimate starting point -- so a .dir.txt must not
+            # be a way around it.
+            refuse = _terrain_needs(source_dir)
+            if refuse:
+                raise PackFailed(f"Not packing: {refuse}.")
         listings = [f for f in os.listdir(source_dir)
                     if f.lower().endswith('.dir.txt')]
         if listings:
@@ -4363,9 +4372,6 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                 print(f"Scanned {os.path.basename(source_dir)}: "
                       f"{len(names)} entries")
             else:
-                missing = _terrain_needs(source_dir)
-                if missing:
-                    raise PackFailed(f"Not packing: {missing}.")
                 scanned = True
                 names, _objects, scan_notes = scan_terrain(source_dir)
                 stem = 'Level'

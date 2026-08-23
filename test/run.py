@@ -303,8 +303,17 @@ def check_gui(no_numpy=False):
         return say(True, 'gui', 'PySide6 not installed, skipped')
 
     env = dict(os.environ, QT_QPA_PLATFORM='offscreen')
-    r = subprocess.run([sys.executable, '-m', 'gui', '--selftest'],
-                       capture_output=True, text=True, cwd=ROOT, env=env)
+    try:
+        # Timed, because the failure this guards against is a hang rather than
+        # a crash: a modal dialog opened where nobody can answer it waits for
+        # ever, and without a deadline the whole run waits with it.
+        r = subprocess.run([sys.executable, '-m', 'gui', '--selftest'],
+                           capture_output=True, text=True, cwd=ROOT, env=env,
+                           timeout=120)
+    except subprocess.TimeoutExpired:
+        return say(False, 'gui builds',
+                   'did not finish in 120s -- a dialog with nobody to answer '
+                   'it, or an event loop that was entered')
     if r.returncode or 'selftest ok' not in r.stdout:
         return say(False, 'gui builds', _tail(r.stdout + r.stderr))
     good = say(True, 'gui builds')
