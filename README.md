@@ -230,18 +230,16 @@ So every source is reduced to that form:
 That second rule reads the picture rather than its extension, so the same art
 packs the same way saved either way.
 
-**Colour is where `.bmp` and `.png` still differ.** A `.bmp` is taken as
-already authored -- its colours kept exactly and counted against the budget --
-where anything else is fitted to a palette the tool cuts. That is a rule about
-the container rather than the art, and an indexed `.png` has every bit as good
-a claim to being authored, so do not lean on it: **if you have fitted your art
-to a palette you chose, pass `--no-palette`**, which keeps every picture's own
-colours whatever it was saved as.
+**Colour is cut across everything.** Every picture is fitted to one palette
+the tool cuts over the whole terrain, whatever its format and whether or not
+it arrived indexed. A `.bmp` used to be exempt, its colours kept whole and the
+rest of the art left to divide what remained -- but that made the file's
+extension decide whose colours were honoured, and an indexed `.png` is just as
+authored.
 
-In practice the difference is small. A cut made over art that is already
-indexed largely rediscovers the same palette: the 35 indexed PNGs of one
-terrain here come through it with no colour shift at all, and the indexed
-BMPs of another shift by 0.8 of 441 at worst.
+**If you have fitted your art to a palette you chose, pass `--no-palette`.**
+That keeps every picture's own colours, says so plainly, and does not depend
+on how anything was saved.
 
 The cut is made **once for the whole terrain**, not per picture. The game
 aggregates every picture's palette into one table and the guide caps it at 112
