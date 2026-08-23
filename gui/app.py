@@ -35,6 +35,17 @@ def _human(n):
         n /= 1024
 
 
+def _hidden(name):
+    """Whether a file is the filesystem's business rather than the author's.
+
+    .DS_Store is the one that actually turns up -- the Finder writes one into
+    every folder it has been looked at in -- and listing it as part of someone's
+    terrain is noise. The packer ignores these too, so showing them would also
+    be untrue about what is going to be packed.
+    """
+    return os.path.basename(name).startswith('.')
+
+
 def _elide(path, keep=52):
     """A path short enough for a label, with the end kept.
 
@@ -398,7 +409,7 @@ class Window(QMainWindow):
             return
         for name in names:
             path = os.path.join(folder, name)
-            if not os.path.isfile(path):
+            if not os.path.isfile(path) or _hidden(name):
                 continue
             item = QTreeWidgetItem([name, _human(os.path.getsize(path))])
             self._files.addTopLevelItem(item)

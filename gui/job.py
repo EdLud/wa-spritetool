@@ -63,10 +63,16 @@ def _snapshot(folder):
     consolidated object_settings.txt, art refitted in place. Comparing two of
     these is how the window can say what it changed, which the CLI got for
     free by printing as it went.
+
+    Dotfiles are left out. The Finder rewrites .DS_Store whenever a folder is
+    looked at, so including them would report a change the pack did not make.
     """
     out = {}
-    for root, _dirs, files in os.walk(folder):
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
         for f in files:
+            if f.startswith('.'):
+                continue
             p = os.path.join(root, f)
             try:
                 st = os.stat(p)
