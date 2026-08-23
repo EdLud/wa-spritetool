@@ -5,11 +5,12 @@
     python3 test/run.py --no-numpy      # the pure-Python paths
     python3 test/run.py decode          # just one group
 
-Four groups:
+Five groups:
 
   decode    the three Water.dir fixtures, decompressed and diffed byte for byte
   manifest  Coral Reef re-described and diffed against the committed manifest
   pack      a terrain built from source art and compared against a golden
+  padding   compressed art widened to a multiple of 4, its height left alone
   colours   numpy and pure-Python agreeing on what they count
 
 `pack` is the one that did not exist before. The decode fixtures cover reading
@@ -253,6 +254,36 @@ def _check_listing_needs_icon(no_numpy=False):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def check_padding(no_numpy=False):
+    """Compressed art is widened to a multiple of 4, and left alone otherwise.
+
+    The guide asks for both dimensions, but the corpus only supports the
+    width: of 3,120 compressed images across 143 installed terrains none is an
+    odd width and 690 are an odd height. Padding the height moved art inside
+    its own box -- an object is placed by its bottom edge -- which changed
+    where the game spawned it.
+    """
+    sys.path.insert(0, ROOT)
+    import spritetool as st
+
+    good = True
+    w, h, out, grew = st._pad_to_multiple_of_four(104, 98, bytes(104 * 98))
+    good = say((w, h, grew) == (104, 98, False), 'odd height left alone',
+               f'104x98 -> {w}x{h}') and good
+
+    art = bytes([1] * (5 * 3))
+    w, h, out, grew = st._pad_to_multiple_of_four(5, 3, art)
+    rows = [list(out[y * w:(y + 1) * w]) for y in range(h)]
+    want = [[1, 1, 1, 1, 1, 0, 0, 0]] * 3
+    good = say((w, h, grew) == (8, 3, True) and rows == want,
+               'odd width widened, art at left', f'5x3 -> {w}x{h}') and good
+
+    w, h, _out, grew = st._pad_to_multiple_of_four(8, 8, bytes(64))
+    good = say((w, h, grew) == (8, 8, False), 'already aligned untouched',
+               f'8x8 -> {w}x{h}') and good
+    return good
+
+
 def _check_wide(out):
     """Invariants for a terrain the cut had to reduce."""
     sys.path.insert(0, ROOT)
@@ -333,7 +364,8 @@ def check_colours(no_numpy=False):
 
 
 GROUPS = {'decode': check_decode, 'manifest': check_manifest,
-          'pack': check_pack, 'colours': check_colours}
+          'pack': check_pack, 'padding': check_padding,
+          'colours': check_colours}
 
 
 def main():

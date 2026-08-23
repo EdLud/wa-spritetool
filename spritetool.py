@@ -3355,8 +3355,10 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
                      f'guide budgets {MAX_SHARED_COLOURS} and warns the '
                      f'terrain will not load beyond it')
 
-    # Objects that SpriteEditor would have corrupted. Our own encoder does not
-    # have that bug, so this only matters for art meant to go back through it.
+    # Width only, which is the half of the guide's rule the corpus supports:
+    # of 3,120 compressed images across 143 installed terrains not one is an
+    # odd width, while 690 are an odd height and draw correctly. See
+    # _pad_to_multiple_of_four.
     odd = []
     for obj in listed:
         n = lower.get(f'{obj.lower()}.img')
@@ -3365,11 +3367,11 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
         data = entries[n]
         if len(data) > 9 and data[9] & ImageFile.COMPRESSED_FLAG:
             got = _img_dims(data)
-            if got and (got[0] % 4 or got[1] % 4):
+            if got and got[0] % 4:
                 odd.append(f'{obj} ({got[0]}x{got[1]})')
     if odd:
         notes.append(f'{len(odd)} compressed object(s) are not a multiple of 4 '
-                     f'in both dimensions, which SpriteEditor corrupts: '
+                     f'wide, which the game draws corrupt: '
                      f'{", ".join(odd[:4])}'
                      + (f' and {len(odd) - 4} more' if len(odd) > 4 else ''))
     return refuse, notes
@@ -3435,29 +3437,42 @@ def encode_icon(pixels: bytes, palette: bytes, compress: bool = True) -> bytes:
 
 def _pad_to_multiple_of_four(width: int, height: int, pixels: bytes
                              ) -> Tuple[int, int, bytes, bool]:
-    """Grow a picture with transparent pixels until both sides divide by 4.
+    """Grow a picture with transparent pixels until its width divides by 4.
 
-    The guide asks for it -- "the height and width values must be divisible by
-    4 if you wish to use .IMG compression... the object will appear corrupt
-    in-game" -- and a terrain of objects 117, 65 and 338 wide came out with
-    every one of them mangled while those 124, 40 and 108 wide were perfect.
+    The guide says "the height and width values must be divisible by 4 if you
+    wish to use .IMG compression... the object will appear corrupt in-game",
+    and a terrain of objects 117, 65 and 338 wide came out with every one of
+    them mangled while those 124, 40 and 108 wide were perfect. Note that the
+    evidence there is entirely about width -- the heights were never varied.
 
-    The new pixels go at the top and on the right. An object stands on its
-    bottom edge, so adding rows underneath would lift it off the ground; the
-    guide uses that deliberately elsewhere, to float an object, which is not
-    what is wanted here.
+    The height half of the guide's sentence does not survive the corpus. Of
+    3,120 compressed images across 143 installed terrains, not one is an odd
+    width -- that rule is real and absolute -- while 690 are an odd height,
+    including 670 core assets like Cosmic's 64x49 bridge-r. Among uncompressed
+    objects odd widths are ordinary, 32 of 68, so it is compression that
+    constrains the width, as a row-based codec would.
+
+    Checked in the game rather than argued from the corpus alone: two builds
+    of Cosmic differing only in this object, one 104x98 and one padded to
+    104x100, both load and draw correctly. The padding is not harmless
+    though -- an object is placed by its bottom edge, and the two added rows
+    visibly change where the game spawns it.
+
+    The author's own build script pads both dimensions with ImageMagick, and
+    he still shipped this object at 104x98, so the script cannot have been
+    what produced the archive.
+
+    The new pixels go on the right, where they cost nothing.
     """
     new_w = (width + 3) // 4 * 4
-    new_h = (height + 3) // 4 * 4
-    if (new_w, new_h) == (width, height):
+    if new_w == width:
         return width, height, pixels, False
-    top = new_h - height
-    out = bytearray(new_w * new_h)          # index 0 is transparent
+    out = bytearray(new_w * height)         # index 0 is transparent
     for y in range(height):
         src = y * width
-        dst = (y + top) * new_w
+        dst = y * new_w
         out[dst:dst + width] = pixels[src:src + width]
-    return new_w, new_h, bytes(out), True
+    return new_w, height, bytes(out), True
 
 
 def encode_image(width: int, height: int, pixels: bytes, palette: bytes,
@@ -3770,9 +3785,9 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
                 width, height, remapped)
             if grew:
                 notes.append(
-                    f'  note: {name}: grown to {width}x{height}; a compressed '
-                    f'object the game draws correctly needs both sides a '
-                    f'multiple of 4')
+                    f'  note: {name}: widened to {width}x{height}; a '
+                    f'compressed object the game draws correctly needs a '
+                    f'width that is a multiple of 4')
         return encode_image(width, height, remapped, palette,
                             compress=compress_img), True
 
