@@ -197,6 +197,20 @@ def check_pack(no_numpy=False):
             good = _check_wide(out) and good
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # shortpal: an indexed BMP whose palette holds fewer than 256 colours,
+    # packed alongside a PNG so a shared palette is planned and the BMP is
+    # fitted to it. That path once scanned range(1, 256) against the short
+    # palette and died on an IndexError; this is the regression guard. The
+    # assertion is simply that packing succeeds.
+    out, tmp, rc, log = _pack_fixture('shortpal', ['--defaults'], no_numpy)
+    try:
+        if rc:
+            good = say(False, 'pack shortpal', _tail(log))
+        else:
+            good = say(True, 'pack shortpal', 'packed') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return good
 
 

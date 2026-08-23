@@ -3722,12 +3722,17 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
                     counts[c] = counts.get(c, 0) + 1
             if counts:
                 index_of, error = _map_to_palette(counts, shared_palette)
+                # Remap each source index to the shared palette. Walk the
+                # source palette's own entries -- there are len//3 of them,
+                # not 256, so scanning range(1, 256) reads past the end of a
+                # shorter palette (an indexed BMP carries only the colours it
+                # uses) and dies on an IndexError.
                 table = bytearray(256)
-                for c, i in index_of.items():
-                    for v in range(1, 256):
-                        if (source_palette[v * 3], source_palette[v * 3 + 1],
-                                source_palette[v * 3 + 2]) == c:
-                            table[v] = i
+                for v in range(1, len(source_palette) // 3):
+                    c = (source_palette[v * 3], source_palette[v * 3 + 1],
+                         source_palette[v * 3 + 2])
+                    if c in index_of:
+                        table[v] = index_of[c]
                 pixels = pixels.translate(bytes(table))
                 source_palette = b'\x00\x00\x00' + b''.join(
                     bytes(c) for c in shared_palette)
