@@ -1,0 +1,144 @@
+"""The packing job, run in a process of its own. No Qt in this file.
+
+Packing does not belong in the window's process. It takes tens of seconds, it
+starts process pools of its own, and `Team17Compressor.compress` is a tight
+Python loop with nothing in it that would notice a request to stop -- so a
+thread could not be cancelled, only waited for. A separate process can be
+terminated outright, and a crash in Pillow kills the job rather than the app.
+
+Everything here has to survive being pickled and re-imported under `spawn`,
+which is why the job is a module-level function taking plain queues, and why
+what goes over them are dicts rather than the tool's own dataclasses.
+"""
+
+import os
+import sys
+import traceback
+
+# The window sends one of these back for a question.
+ANSWER_YES = 'yes'
+ANSWER_NO = 'no'
+ANSWER_CANCEL = 'cancel'
+
+
+class Cancelled(Exception):
+    """The window closed a question rather than answering it."""
+
+
+class _Tee:
+    """A file-like object that turns writes into events.
+
+    The tool reports by printing: notes to stderr, findings to stdout. Rather
+    than change that for the GUI's benefit, the child's streams are pointed
+    here and the lines arrive as events like everything else.
+    """
+
+    def __init__(self, events, kind):
+        self._events = events
+        self._kind = kind
+        self._buf = ''
+
+    def write(self, text):
+        self._buf += text
+        while '\n' in self._buf:
+            line, _, self._buf = self._buf.partition('\n')
+            self._events.put((self._kind, line))
+        return len(text)
+
+    def flush(self):
+        if self._buf:
+            self._events.put((self._kind, self._buf))
+            self._buf = ''
+
+    def isatty(self):
+        # False, and it matters: cli_asker reads a terminal when there is one.
+        # There is not one here, and the window answers instead.
+        return False
+
+
+def _snapshot(folder):
+    """Every file under `folder`, with its size and mtime.
+
+    Packing writes into the folder it is given -- borrowed art, settings, a
+    consolidated object_settings.txt, art refitted in place. Comparing two of
+    these is how the window can say what it changed, which the CLI got for
+    free by printing as it went.
+    """
+    out = {}
+    for root, _dirs, files in os.walk(folder):
+        for f in files:
+            p = os.path.join(root, f)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            out[os.path.relpath(p, folder)] = (st.st_size, st.st_mtime_ns)
+    return out
+
+
+def _changes(before, after):
+    """(added, changed, removed), each a sorted list of relative paths."""
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = sorted(k for k in set(before) & set(after)
+                     if before[k] != after[k])
+    return added, changed, removed
+
+
+def run(folder, out_dir, option_fields, answers, events, replies):
+    """Pack `folder`, reporting to `events` and asking through `replies`.
+
+    Runs in a spawned child. Never raises: everything it has to say leaves
+    through the queue, because an exception here would die somewhere nobody
+    is looking.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import spritetool as st
+
+    sys.stdout = _Tee(events, 'out')
+    sys.stderr = _Tee(events, 'err')
+
+    def ask(question):
+        events.put(('question', {
+            'key': question.key,
+            'prompt': question.prompt,
+            'default': question.default,
+            'destructive': question.destructive,
+            'subjects': list(question.subjects),
+        }))
+        reply = replies.get()
+        if reply == ANSWER_CANCEL:
+            raise Cancelled()
+        return reply == ANSWER_YES
+
+    before = _snapshot(folder)
+    try:
+        options = st.Options(**option_fields)
+        options.answers.update(answers)
+        result = st.pack_terrain(folder, out_dir, options, ask)
+    except Cancelled:
+        events.put(('cancelled', None))
+    except st.SpritetoolError as exc:
+        events.put(('failed', exc.lines()))
+    except Exception:
+        # Anything unexpected reaches the window as a report rather than a
+        # silent death. The traceback is the only useful thing left to say.
+        events.put(('crashed', traceback.format_exc()))
+    else:
+        added, changed, removed = _changes(before, _snapshot(folder))
+        events.put(('done', {
+            'out_path': result.out_path,
+            'entries': list(result.entries),
+            'built': result.built,
+            'reused': result.reused,
+            'archive_bytes': result.archive_bytes,
+            'largest': list(result.largest) if result.largest else None,
+            'too_big_to_send': result.too_big_to_send,
+            'added': added,
+            'changed': changed,
+            'removed': removed,
+        }))
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        events.put(('finished', None))

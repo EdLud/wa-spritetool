@@ -172,7 +172,14 @@ SpriteEditor writes).
 
 - Language: all code, comments, and docs are in English.
 - Standard library only in `spritetool.py`, plus Pillow. Do not add
-  dependencies; numpy usage must stay optional (guarded import).
+  dependencies; numpy usage must stay optional (guarded import). This rule is
+  scoped to the tool: `gui/` may depend on PySide6, because `gui` imports
+  `spritetool` and never the other way round. Keep it that way — the tool has
+  to stay usable and testable without Qt installed.
+- `gui/job.py` runs in a spawned child and must not import Qt, directly or
+  through `gui/app.py`. Packing there rather than in the window is what makes
+  cancelling possible: `Team17Compressor.compress` is a tight Python loop that
+  would ignore any request to stop, so a thread could only be waited for.
 - Type hints are used on signatures; module-level constants in UPPER_CASE.
 - Comments explain the *why*, especially reverse-engineered format facts —
   cite observed evidence (file counts, offsets) the way the existing code

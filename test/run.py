@@ -5,7 +5,7 @@
     python3 test/run.py --no-numpy      # the pure-Python paths
     python3 test/run.py decode          # just one group
 
-Six groups:
+Seven groups:
 
   decode    the three Water.dir fixtures, decompressed and diffed byte for byte
   manifest  Coral Reef re-described and diffed against the committed manifest
@@ -13,6 +13,8 @@ Six groups:
   jobs      every --jobs setting building the same archive
   padding   compressed art widened to a multiple of 4, its height left alone
   colours   numpy and pure-Python agreeing on what they count
+  gui       the window builds and its job process imports no Qt (skipped
+            without PySide6, which the tool does not depend on)
 
 `pack` is the one that did not exist before. The decode fixtures cover reading
 an archive; nothing covered building one, so every packing change was checked by
@@ -288,6 +290,36 @@ def check_jobs(no_numpy=False):
                f'{len(hashes)} settings, {list(hashes.values())[0][:8]}')
 
 
+def check_gui(no_numpy=False):
+    """The window builds, and the job process packs without Qt.
+
+    Skipped when PySide6 is not installed, which is the ordinary case: the
+    tool does not depend on it and must keep working without it.
+    """
+    have = subprocess.run(
+        [sys.executable, '-c', 'import PySide6'],
+        capture_output=True, cwd=ROOT)
+    if have.returncode:
+        return say(True, 'gui', 'PySide6 not installed, skipped')
+
+    env = dict(os.environ, QT_QPA_PLATFORM='offscreen')
+    r = subprocess.run([sys.executable, '-m', 'gui', '--selftest'],
+                       capture_output=True, text=True, cwd=ROOT, env=env)
+    if r.returncode or 'selftest ok' not in r.stdout:
+        return say(False, 'gui builds', _tail(r.stdout + r.stderr))
+    good = say(True, 'gui builds')
+
+    # The child that does the packing must not drag Qt in with it: it runs
+    # under spawn, and every import it makes is paid for again in each worker.
+    probe = ('import sys, gui.job; '
+             'print("qt" if any(m.startswith("PySide6") for m in sys.modules) '
+             'else "clean")')
+    r = subprocess.run([sys.executable, '-c', probe],
+                       capture_output=True, text=True, cwd=ROOT)
+    return say(r.stdout.strip() == 'clean', 'job imports no Qt',
+               r.stdout.strip() or _tail(r.stderr)) and good
+
+
 def check_padding(no_numpy=False):
     """Compressed art is widened to a multiple of 4, and left alone otherwise.
 
@@ -413,7 +445,7 @@ def check_colours(no_numpy=False):
 
 GROUPS = {'decode': check_decode, 'manifest': check_manifest,
           'pack': check_pack, 'jobs': check_jobs, 'padding': check_padding,
-          'colours': check_colours}
+          'colours': check_colours, 'gui': check_gui}
 
 
 def main():
