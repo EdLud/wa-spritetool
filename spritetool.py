@@ -1613,19 +1613,27 @@ def plan_shared_palette(sources: Dict[str, str],
     if not png_names:
         return None, notes
 
-    spare = counts
-    room = budget
+    # The debris caption is kept exactly, so that select-by-colour can lift
+    # it off. Reserved whether or not the colours were counted: the debris is
+    # usually a lent picture, and a lent picture's colours never reach
+    # `counts` at all. See DEBRIS_LABEL_COLOURS.
+    keep = {c for c in DEBRIS_LABEL_COLOURS
+            if c in counts or any(n.startswith('debris') for n in png_names)}
+    spare = {c: n for c, n in counts.items() if c not in keep}
+    room = budget - len(keep)
     lent_note = (f', and {len(lent)} default(s) fitted to it afterwards'
                  if lent else '')
+    if keep:
+        lent_note += (f'; {len(keep)} kept exactly for the debris caption')
     pictures = len(png_names) - len(lent)
     if len(spare) <= room:
-        chosen = sorted(spare)
+        chosen = sorted(keep | set(spare))
         notes.append(f'{pictures} picture(s) share {len(chosen)} colours, '
                      f'inside the {budget} budget; nothing '
                      f'reduced{lent_note}')
         return chosen, notes
 
-    chosen = sorted(cut_palette(spare, room))
+    chosen = sorted(keep | set(cut_palette(spare, room)))
     notes.append(f'{len(spare)} colours across {pictures} picture(s) cut to '
                  f'{len(chosen)}, inside the {budget} the terrain may '
                  f'hold{lent_note}')
@@ -2215,6 +2223,15 @@ DEFAULT_SILENT = ('soil.img', 'grass.img')
 # overrides back.spr where a terrain has both.
 DEFAULT_LAYERS = ('_back.spr', 'back2.spr', 'front.spr')
 
+# The frame rect and the caption on the default debris strip. They are there to
+# be deleted: the sheet ships with every frame labelled so an author can see
+# which is which, and the way to clear them is GIMP's select-by-colour. That
+# only works while both stay distinct from the art around them, so the cut is
+# told to keep them exactly rather than move them to wherever the terrain's
+# own colours happen to leave room. Two of the 112, and only while the strip
+# still carries them -- redraw the debris and they cost nothing.
+DEBRIS_LABEL_COLOURS = ((0, 96, 255), (255, 220, 0))
+
 # What the game will not open without. Everything else is offered once and
 # never mentioned again.
 REQUIRED_ASSETS = (DEFAULT_LOOK + DEFAULT_SILENT + DEFAULT_BRIDGE
@@ -2419,6 +2436,49 @@ def _has_icon(source_dir: str) -> bool:
     present = {n.lower() for n in os.listdir(source_dir)}
     return any(f'icon{s}' in present
                for s in ('.png', '.img.png', '.bmp', '.img.bmp'))
+
+
+def _recolour_borrowed(source_dir: str, borrowed: Dict[str, str],
+                       palette: Sequence[Tuple[int, int, int]]) -> List[str]:
+    """Fit the art just lent to the terrain's palette, in the build folder.
+
+    A default is copied in on the first run and is an ordinary file from then
+    on -- so on the next pack it is cut alongside the author's own work, and
+    spends budget the first run had reserved for them. Fitting the copies
+    while they are being written keeps the folder honest: what is on disk is
+    what the archive holds, and packing again changes nothing.
+
+    Only the picture is rewritten. A .spd beside it describes geometry, which
+    recolouring does not touch.
+    """
+    if Image is None or not palette:
+        return []
+    done: List[str] = []
+    for entry, src in sorted(borrowed.items()):
+        dest = os.path.join(source_dir, os.path.basename(src))
+        if not os.path.exists(dest):
+            continue
+        try:
+            with open(dest, 'rb') as fh:
+                blob = fh.read()
+            if dest.lower().endswith('.png'):
+                w, h, pixels, pal, _ = read_png(blob, palette=list(palette))
+            else:
+                continue                 # a .bmp default is already indexed
+            out = Image.new('RGBA', (w, h))
+            flat = []
+            for v in pixels:
+                if v:
+                    flat.append((pal[v * 3], pal[v * 3 + 1],
+                                 pal[v * 3 + 2], 255))
+                else:
+                    flat.append((0, 0, 0, 0))
+            out.putdata(flat)
+            out.save(dest, 'PNG', optimize=True)
+            done.append(os.path.basename(dest))
+        except Exception:
+            continue                     # never fail a pack over a preset
+    return done
 
 
 def _fill_from_defaults(names: List[str], source_dir: str,
@@ -4014,6 +4074,10 @@ def main():
         # ...and their names alone, which the palette planner needs so it can
         # leave the whole budget to the author's own art.
         lent_names: List[str] = []
+        # Set only on the scanned-folder path; a <name>.dir.txt listing never
+        # borrows anything, and the recolour step below still has to be able
+        # to ask.
+        borrowed: Dict[str, str] = {}
         # Whether the entries came from reading the folder rather than from a
         # listing. Only then is the folder the terrain's own, and only then is
         # writing anything back into it right.
@@ -4097,6 +4161,15 @@ def main():
                         # is the author's, and a default is fitted to what is
                         # left of it rather than shrinking their work for it.
                         lent_names = list(borrowed)
+                    elif settings:
+                        # Still borrowed, still spending none of the budget.
+                        # Without this a folder packs differently the second
+                        # time: the copies are ordinary files by then, the cut
+                        # is made across them too, and it lands somewhere else
+                        # -- 13 of 112 colours in common, in one measured case.
+                        was = settings.get('borrowed', '')
+                        if was and was != 'nothing':
+                            lent_names = [n for n in was.split(',') if n]
                     print(f"Scanned {os.path.basename(source_dir)}: "
                           f"{len(names)} entries, {len(_objects)} objects")
         else:
@@ -4201,6 +4274,19 @@ def main():
                 picture_sources, borrowed=lent_names)
             for note in palette_notes:
                 print(f'  note: {note}', file=sys.stderr)
+            if borrowed and shared_palette:
+                # Written back fitted, so the folder holds what the archive
+                # holds. Until now a lent picture was mapped on the way into
+                # the archive and left untouched on disk, which made the next
+                # pack a different one: the copies were ordinary files by
+                # then, and cut alongside the author's art rather than around
+                # it.
+                redone = _recolour_borrowed(source_dir, borrowed,
+                                            shared_palette)
+                if redone:
+                    print(f"  fitted {len(redone)} borrowed picture(s) to "
+                          f"the terrain's palette in "
+                          f"{os.path.basename(source_dir)}")
 
         def _plan(name: str):
             """What packing one entry needs, worked out before any of it runs."""
