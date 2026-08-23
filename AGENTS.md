@@ -185,6 +185,16 @@ SpriteEditor writes).
   structural rather than a habit: a prompt reachable only from a terminal
   cannot be reached from a window, and there was one of those.
   `--defaults` / `--no-defaults` are shorthand for the `defaults.` group.
+- Process pools go through `_pool()`, which asks for the `spawn` start method
+  everywhere so there is one behaviour to test rather than one per platform,
+  and marks each worker via the initializer. How many processes to use is
+  `Parallel`'s decision, never a fresh `os.cpu_count()` at the call site.
+  Whatever the setting, the archive must come out byte for byte the same —
+  `test/run.py jobs` checks that, because the pools fall back to serial work
+  inside a bare `except` and a disagreement would otherwise be invisible.
+- Anything that finds a file beside the tool must go through
+  `defaults_roots()`. A frozen build has no `__file__` to be beside, and the
+  failure is silent — it looks exactly like "no presets installed".
 - Windows paths matter: archive entry names use `\` separators, and the tool
   is expected to run on Windows (no find(1) assumptions; CRLF in generated
   `.spd`/`.inf` files to match SpriteEditor).

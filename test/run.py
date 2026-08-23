@@ -5,11 +5,12 @@
     python3 test/run.py --no-numpy      # the pure-Python paths
     python3 test/run.py decode          # just one group
 
-Five groups:
+Six groups:
 
   decode    the three Water.dir fixtures, decompressed and diffed byte for byte
   manifest  Coral Reef re-described and diffed against the committed manifest
   pack      a terrain built from source art and compared against a golden
+  jobs      every --jobs setting building the same archive
   padding   compressed art widened to a multiple of 4, its height left alone
   colours   numpy and pure-Python agreeing on what they count
 
@@ -254,6 +255,39 @@ def _check_listing_needs_icon(no_numpy=False):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def check_jobs(no_numpy=False):
+    """Every parallelism setting must build the same archive.
+
+    Nobody had ever checked this. The pools fall back to serial work inside a
+    bare `except Exception`, so a parallel path that produced different bytes
+    would look exactly like one that worked, and the difference would only
+    show up as a terrain that behaved oddly on someone else's machine.
+
+    The wide fixture is used because it has more entries than the threshold
+    for spreading them over processes, so the entry pool actually runs.
+    """
+    hashes = {}
+    for label, flags in (('auto', []),
+                         ('--jobs=1', ['--jobs=1']),
+                         ('--jobs=2', ['--jobs=2']),
+                         ('--no-nested-jobs', ['--no-nested-jobs'])):
+        out, tmp, rc, log = _pack_fixture(
+            'wide', ['--defaults', '--repalette'] + flags, no_numpy)
+        try:
+            if rc:
+                return say(False, f'pack {label}', _tail(log))
+            hashes[label] = md5(os.path.join(out, 'Level.dir'))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    agreed = len(set(hashes.values())) == 1
+    if not agreed:
+        odd = ', '.join(f'{k}={v[:8]}' for k, v in sorted(hashes.items()))
+        return say(False, 'every --jobs agrees', odd)
+    return say(True, 'every --jobs agrees',
+               f'{len(hashes)} settings, {list(hashes.values())[0][:8]}')
+
+
 def check_padding(no_numpy=False):
     """Compressed art is widened to a multiple of 4, and left alone otherwise.
 
@@ -378,7 +412,7 @@ def check_colours(no_numpy=False):
 
 
 GROUPS = {'decode': check_decode, 'manifest': check_manifest,
-          'pack': check_pack, 'padding': check_padding,
+          'pack': check_pack, 'jobs': check_jobs, 'padding': check_padding,
           'colours': check_colours}
 
 

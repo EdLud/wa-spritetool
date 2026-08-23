@@ -1760,6 +1760,89 @@ _PARALLEL_MIN_BYTES = 1 << 20
 _PARALLEL_MIN_ENTRIES = 12
 
 
+def frozen() -> bool:
+    """Whether this is running from a PyInstaller-style bundle.
+
+    Worth asking because a frozen build re-executes the bundle to start a
+    worker rather than re-running a script, which makes both the pools and
+    the search for the shipped art behave differently.
+    """
+    return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+
+
+@dataclasses.dataclass(frozen=True)
+class Parallel:
+    """How much of the machine a pack may use, decided once and passed down.
+
+    Two pools are involved: one over the archive's entries, and one inside a
+    single entry over a large sprite's streams. The second runs inside a
+    worker of the first, so eight workers each start eight more. That is
+    deliberate -- a terrain's time is spent in its two or three largest
+    sprites, one entry apiece, so entry-level work alone leaves them serial
+    and the pack waits on them. Three runs each: inner pool off 25.1s, held
+    to two workers 18.0s, left alone 15.5s.
+
+    `nested` is what makes that optional. A worker knows it is one because
+    the pool marks it (see `_mark_worker`), rather than guessing from call
+    depth, so turning the inner pool off is a decision made here and not a
+    property of where the code happens to be running.
+    """
+
+    jobs: int = 0                   # 0 means "decide from the machine"
+    nested: bool = True
+
+    @property
+    def workers(self) -> int:
+        return self.jobs if self.jobs > 0 else (os.cpu_count() or 1)
+
+    def entry_workers(self, entries: int) -> int:
+        """How many processes to spread `entries` over; 1 means do it here."""
+        if self.jobs == 1 or entries < _PARALLEL_MIN_ENTRIES:
+            return 1
+        return max(1, min(entries, self.workers))
+
+    def stream_workers(self, streams: int, total_bytes: int) -> int:
+        """How many processes to spread one sprite's streams over."""
+        if self.jobs == 1 or not self.nested:
+            return 1
+        if streams < _PARALLEL_MIN_STREAMS or total_bytes < _PARALLEL_MIN_BYTES:
+            return 1
+        return max(1, min(streams, self.workers))
+
+
+#: The policy in force. Module-level because the inner pool is reached from
+#: inside `encode_sprite`, several calls below anything that took an argument
+#: from the command line, and threading it through every one of them would be
+#: a wide change for a value that never varies within a run. A worker inherits
+#: it through the pool initializer.
+_PARALLEL = Parallel()
+
+#: Set in a pool worker, so nested work can be recognised rather than deduced.
+_IN_WORKER = False
+
+
+def _mark_worker(policy: 'Parallel') -> None:
+    """Pool initializer: tell the child what it is and what it may do."""
+    global _PARALLEL, _IN_WORKER
+    _PARALLEL = policy
+    _IN_WORKER = True
+
+
+def _pool(workers: int, policy: 'Parallel'):
+    """A process pool that starts the same way everywhere.
+
+    macOS and Windows spawn, Linux forks. Forking a process that has already
+    imported Pillow and numpy inherits their state, so the same code can
+    behave differently on one platform than another; asking for spawn
+    everywhere means there is one behaviour to test rather than two.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+    import multiprocessing
+    return ProcessPoolExecutor(max_workers=workers,
+                               mp_context=multiprocessing.get_context('spawn'),
+                               initializer=_mark_worker, initargs=(policy,))
+
+
 def _pack_entry_safe(plan):
     """Pack one entry in another process, handing back what it had to say.
 
@@ -1787,25 +1870,20 @@ def _pack_entry_safe(plan):
 def _compress_all(streams: Sequence[bytes]) -> List[bytes]:
     """Compress every stream, using more than one core where it pays."""
     blobs = [bytes(b) for b in streams]
-    total = sum(len(b) for b in blobs)
-    if (len(blobs) < _PARALLEL_MIN_STREAMS
-            or total < _PARALLEL_MIN_BYTES):
+    workers = _PARALLEL.stream_workers(len(blobs), sum(len(b) for b in blobs))
+    if workers < 2:
         return [Team17Compressor.compress(b) for b in blobs]
     try:
-        from concurrent.futures import ProcessPoolExecutor
-        import os as _os
-        workers = min(len(blobs), _os.cpu_count() or 1)
-        if workers < 2:
-            raise RuntimeError('one core')
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with _pool(workers, _PARALLEL) as pool:
             # Order matters: a stream's position is derived from the lengths
             # of the ones before it, so the results have to come back in the
             # order they went out. map does that; as_completed would not.
             return list(pool.map(Team17Compressor.compress, blobs,
                                  chunksize=1))
     except Exception:
-        # A machine that cannot fork, a frozen build, an import that is not
-        # picklable -- none of it is worth failing a pack over.
+        # A machine that cannot start a process, an import that is not
+        # picklable -- none of it is worth failing a pack over. The serial
+        # path produces the same bytes, which test/run.py checks.
         return [Team17Compressor.compress(b) for b in blobs]
 
 
@@ -2322,15 +2400,38 @@ REQUIRED_ASSETS = (DEFAULT_LOOK + DEFAULT_SILENT + DEFAULT_BRIDGE
 REPO_URL = 'https://github.com/EdLud/wa-spritetool'
 
 
-def defaults_folder() -> Optional[str]:
-    """Where the shipped art lives, or None when it is not there.
+def defaults_roots() -> List[str]:
+    """Every place the shipped art might be, best first.
 
-    Beside the script rather than beside the terrain: it belongs to the tool,
-    and a copy run from anywhere should still find it.
+    Beside the script when run as one. A frozen build has no script: the
+    bundle is unpacked to sys._MEIPASS and that is where added data lands,
+    while a macOS .app also has a Resources folder beside the executable.
+    Both are listed rather than chosen, so a build that puts the art in
+    either is found and a build that puts it in neither can say where it
+    looked.
     """
-    here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(here, DEFAULTS_DIR)
-    return path if os.path.isdir(path) else None
+    roots = [os.path.dirname(os.path.abspath(__file__))]
+    if frozen():
+        roots.insert(0, sys._MEIPASS)
+        exe = os.path.dirname(os.path.abspath(sys.executable))
+        # .app/Contents/MacOS/spritetool -> .app/Contents/Resources
+        roots.append(os.path.join(os.path.dirname(exe), 'Resources'))
+        roots.append(exe)
+    seen, out = set(), []
+    for r in roots:
+        if r and r not in seen:
+            seen.add(r)
+            out.append(r)
+    return out
+
+
+def defaults_folder() -> Optional[str]:
+    """Where the shipped art lives, or None when it is not there."""
+    for root in defaults_roots():
+        path = os.path.join(root, DEFAULTS_DIR)
+        if os.path.isdir(path):
+            return path
+    return None
 
 
 def default_sources(names: Sequence[str]) -> Dict[str, str]:
@@ -2655,9 +2756,15 @@ def _fill_from_defaults(names: List[str], source_dir: str,
     where = os.path.basename(source_dir.rstrip(os.sep)) or source_dir
 
     def missing_note(what: str, pieces: Sequence[str]) -> str:
+        # Names where it looked. A frozen build that failed to bundle the art
+        # reports the same "no presets" as a source checkout that never had
+        # it, and the two are fixed in completely different places.
+        looked = '; '.join(os.path.join(r, DEFAULTS_DIR)
+                           for r in defaults_roots())
         return (f'no {what} in the folder and no {DEFAULTS_DIR} beside the '
-                f'tool to take one from. Fetch that folder from {REPO_URL}, '
-                f'or supply {", ".join(pieces)} yourself')
+                f'tool to take one from. Looked in: {looked}. Fetch that '
+                f'folder from {REPO_URL}, or supply '
+                f'{", ".join(pieces)} yourself')
 
     def take(wanted: Sequence[str]) -> None:
         available = default_sources(wanted)
@@ -3905,6 +4012,10 @@ def print_help():
     print("                                                       palette.repalette")
     print("                                    --read-palette     fit the art to the")
     print("                                                       colours in palette.png")
+    print("                                    --jobs=N           pack with N processes;")
+    print("                                                       1 uses only this one")
+    print("                                    --no-nested-jobs   do not let a worker")
+    print("                                                       start a pool of its own")
     print("  decompress <dir_file> [output_dir] [--gif]")
     print("                                    Decode sprites to raw pixels, BMP and .spd")
     print("                                    --gif also writes animated GIFs (slow)")
@@ -4027,10 +4138,24 @@ class Options:
     no_palette: bool = False
     repalette: bool = False
     offer_defaults: bool = False
+    #: Processes to pack with; 0 decides from the machine, 1 means this one.
+    jobs: int = 0
+    #: Whether a worker may start a pool of its own for a large sprite.
+    nested_jobs: bool = True
     #: Questions settled ahead of time, by key. A key ending in a dot settles
     #: everything beneath it, which is what --defaults means: an opinion about
     #: borrowed art in general rather than about one piece of it.
     answers: Dict[str, bool] = dataclasses.field(default_factory=dict)
+
+    def parallel(self) -> Parallel:
+        """The parallelism policy these options ask for.
+
+        A frozen build does not nest by default. Each worker is a fresh copy
+        of the whole bundle rather than a re-run script, so the second level
+        costs far more to start and there are many more of them.
+        """
+        return Parallel(jobs=self.jobs,
+                        nested=self.nested_jobs and not frozen())
 
 
 PACK_FLAGS = {
@@ -4045,6 +4170,7 @@ PACK_FLAGS = {
     '--no-palette': ('no_palette', True),
     '--repalette': ('repalette', True),
     '--offer-defaults': ('offer_defaults', True),
+    '--no-nested-jobs': ('nested_jobs', False),
 }
 
 #: Flags that settle a question rather than set an option.
@@ -4077,6 +4203,14 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
                 raise SpritetoolError(f"{head} needs a question to answer, "
                                       f"as {head}=KEY")
             options.answers[key] = head == '--yes'
+            continue
+        if flag.startswith('--jobs'):
+            _, sep, count = flag.partition('=')
+            if not sep or not count.isdigit() or int(count) < 1:
+                raise SpritetoolError(
+                    "--jobs takes a number of processes, as --jobs=4. "
+                    "--jobs=1 packs in this process and nothing else.")
+            options.jobs = int(count)
             continue
         if flag in PACK_ANSWERS:
             key, value = PACK_ANSWERS[flag]
@@ -4127,6 +4261,11 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
     no_palette = options.no_palette
     repalette = options.repalette
     offer_defaults = options.offer_defaults
+    # Module-level rather than a parameter: the inner pool is reached from
+    # deep inside encode_sprite, and a worker picks it up from the pool
+    # initializer instead of from an argument it would have to be handed.
+    global _PARALLEL
+    _PARALLEL = options.parallel()
     # How anything the tool will not decide alone gets decided. The CLI reads
     # a terminal where the flags have not already settled it.
     ask = cli_asker(options.answers)
@@ -4433,18 +4572,18 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
     # Entries do not depend on each other, so they can be built at once --
     # but they have to be ADDED in the order names gives, since that is
     # the archive's own order and a listing may have fixed it deliberately.
-    if len(todo) >= _PARALLEL_MIN_ENTRIES:
+    workers = _PARALLEL.entry_workers(len(todo))
+    if workers > 1:
         try:
-            from concurrent.futures import ProcessPoolExecutor
-            workers = min(len(todo), (os.cpu_count() or 1))
-            if workers < 2:
-                raise RuntimeError('one core')
-            with ProcessPoolExecutor(max_workers=workers) as pool:
+            with _pool(workers, _PARALLEL) as pool:
                 for name, outcome in zip(todo, pool.map(
                         _pack_entry_safe, [_plan(n) for n in todo],
                         chunksize=1)):
                     results[name] = outcome
         except Exception:
+            # Falls through to building each entry here. Silent because the
+            # result is the same archive either way -- test/run.py checks
+            # that the parallel and serial paths agree byte for byte.
             results = {}
     for name in names:
         if name in synthetic:
@@ -4943,4 +5082,13 @@ def main():
 
 
 if __name__ == "__main__":
+    # Before anything else, and before any argument is read. A spawned worker
+    # re-executes this file to reach the function it was given; in a frozen
+    # build there is no file to re-execute, so it re-runs the bundle and would
+    # otherwise start the whole program again -- each copy packing, each one
+    # spawning more. freeze_support() recognises that re-entry, does the
+    # worker's job, and exits. It returns immediately when not frozen, so it
+    # costs a normal run nothing.
+    import multiprocessing
+    multiprocessing.freeze_support()
     sys.exit(main())
