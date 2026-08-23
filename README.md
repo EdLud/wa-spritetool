@@ -130,10 +130,10 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 | `--no-defaults` | never take any of it |
 | `--offer-defaults` | ask about missing art again on a folder already packed |
 | `--no-output-inf` | do not write object settings back into the folder |
-| `--write-palette` | draw the terrain's colours to `palette.png` |
-| `--read-palette` | fit every picture to the colours in `palette.png` |
-| `--no-palette` | cut no shared palette; each picture keeps its own |
-| `--repalette` | fit the art to one palette without asking |
+| `--repalette` | fit everything to one palette, without asking |
+| `--write-palette` | write the terrain's colours to `build/palette.png` |
+| `--read-palette` | fit everything to `build/palette.png` |
+| `--no-palette` | leave every picture's colours alone |
 
 *  - see `the spd format - sprite configuration `
 **  - see further down
@@ -231,48 +231,49 @@ So every source is reduced to that form:
 That second rule reads the picture rather than its extension, so the same art
 packs the same way saved either way.
 
-**Art that fits is left alone.** If your own pictures draw 112 colours or
-fewer, those colours *are* the terrain's palette: nothing is moved, and the
+**Art that fits is left alone.** A terrain can hold 112 colours. If your
+pictures draw 112 or fewer, those are the palette -- nothing is moved, and the
 borrowed art is fitted to what you drew. Pack again and you get the same
-archive, because there was no cut to redo.
+result.
 
-**Past 112, you are asked.** Fitting more colours than the terrain can hold is
-a statistical shift -- colours move, and they move differently as the art
-changes, so a folder does not pack the same way twice. `pack-terrain` offers
-to do it and builds either way; declining packs the art as authored and
-reports what the total came to. `--repalette` answers yes without asking.
+**Past 112, you are asked.** Squeezing more colours than the terrain can hold
+means moving them, and they move differently every time the art changes. So
+`pack-terrain` offers rather than does it. Say no and it packs your colours as
+they are, telling you the total. Say yes and it fits everything to one palette.
+`--repalette` says yes for you.
 
-The way to a terrain that packs identically every time is to bring the art
-inside 112 yourself.
+### Fixing a palette
 
-**When the cut does run, it runs across everything.** Every picture is fitted
-to it, whatever its format and whether or not it arrived indexed. A `.bmp` used to be exempt, its colours kept whole and the
-rest of the art left to divide what remained -- but that made the file's
-extension decide whose colours were honoured, and an indexed `.png` is just as
-authored.
+Repaletting is handy while a terrain is taking shape and a nuisance once it has
+one: every new object re-shuffles the colours of everything already drawn. When
+the look has settled, freeze it.
 
-**If you have fitted your art to a palette you chose, pass `--no-palette`.**
-That keeps every picture's own colours, says so plainly, and does not depend
-on how anything was saved.
+```bash
+python3 spritetool.py pack-terrain build/ --repalette --write-palette
+```
 
-The cut is made **once for the whole terrain**, not per picture. The game
-aggregates every picture's palette into one table and the guide caps it at 112
-colours, so `pack-terrain` reads all the art first, cuts one palette across
-what is left of the budget, and maps every non-`.bmp` picture onto it. The mean
-distance the colours moved is printed, out of the 441 that spans the RGB cube;
-a terrain already inside the budget converts losslessly.
+That writes `build/palette.png`, the terrain's colours as a grid of swatches.
+From then on:
 
-Where both a `.bmp` and a `.png` of the same name exist the `.bmp` wins.
+```bash
+python3 spritetool.py pack-terrain build/ --read-palette
+```
+
+Every picture is fitted to that sheet, so what you have already drawn stays
+exactly as it is and each new object is the one that adapts. Draw within those
+colours and nothing shifts at all; stray far outside them and the new piece
+will look it.
+
+Edit the swatches, or hand over a palette of your own -- any picture will do,
+its colours read in the order they are met. When the look moves on, run
+`--repalette --write-palette` again to freeze the new one.
 
 | Flag | What it does to the colours |
 |---|---|
-| `--write-palette` | writes `build/palette.png`, the terrain's colours as swatches, and says how many of the 112 are spent |
-| `--read-palette` | reads `build/palette.png` and fits **every** picture to it, `.bmp` included |
-| `--no-palette` | cuts nothing; every picture keeps its own colours whatever its format, and the 112 becomes yours to stay inside |
-
-`--read-palette` is the one that overrides the rule above: a palette handed
-over outright is meant to be the whole of the terrain's colours, so an indexed
-`.bmp` is fitted to it like everything else.
+| `--repalette` | fit everything to one palette, without asking |
+| `--write-palette` | write the terrain's colours to `build/palette.png` |
+| `--read-palette` | fit everything to `build/palette.png` |
+| `--no-palette` | leave every picture's colours alone |
 
 ### Object settings
 
