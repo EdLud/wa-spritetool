@@ -182,7 +182,23 @@ Default is an empty image.
 
 Additionally it CAN have
 
-- a non-animated background layer (`back.png`) Dimensions: 640 x 160
+- a non-animated background layer (`_back.png`) Dimensions: 640 x 160
+
+Default:
+
+![_back](presets/_back.png)
+- an animated background layer (`back2.png`) Dimensions: 640 x 160
+
+Default:
+
+![back2](media/back2.gif)
+
+- an animated foreground layer (`front.png`) Dimensions: 640 x 160
+
+Default:
+
+![front](media/front.gif)
+
 
 
 

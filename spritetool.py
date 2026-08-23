@@ -2382,9 +2382,6 @@ def read_settings(folder: str) -> Optional[Dict[str, str]]:
 def write_settings(folder: str, values: Dict[str, str]) -> None:
     """Mark the folder as packed once, and keep what was settled."""
     lines = ['// Written by spritetool the first time this folder was packed.',
-             '// Its presence is what stops the defaults being offered again:',
-             '// a piece missing now was deleted on purpose, not overlooked.',
-             '// Pass --offer-defaults to be asked about everything once more.',
              '']
     for key in sorted(values):
         lines.append(f'{key} = {values[key]}')
