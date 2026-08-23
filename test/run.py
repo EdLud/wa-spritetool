@@ -211,7 +211,46 @@ def check_pack(no_numpy=False):
             good = say(True, 'pack shortpal', 'packed') and good
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    good = _check_listing_needs_icon(no_numpy) and good
     return good
+
+
+def _check_listing_needs_icon(no_numpy=False):
+    """A folder with a .dir.txt and no icon must be refused, not packed.
+
+    A listing names the archive's entries, and the icon is not one of them --
+    it goes beside Level.dir. So the borrow-a-default step that covers a
+    scanned folder never runs, and a SpriteEditor-era folder (which keeps its
+    icon in the installed terrain, not the build) would otherwise pack all the
+    way to the end and mention the missing icon in its closing notes, having
+    written an archive the game will not load.
+    """
+    fixture = os.path.join(HERE, 'pack', 'flat')
+    tmp = tempfile.mkdtemp(prefix='pack-listing-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        names = sorted(f for f in os.listdir(build) if f.endswith('.png'))
+        with open(os.path.join(build, 'Level.dir.txt'), 'w',
+                  encoding='latin-1', newline='') as fh:
+            fh.write(''.join(f'{n[:-4]}.img\r\n' for n in names))
+
+        out = os.path.join(tmp, 'out')
+        rc, stdout, stderr = tool(
+            ['pack-terrain', build, out, '--defaults'], no_numpy)
+        log = stdout + stderr
+        if not rc:
+            return say(False, 'pack listing without icon', 'packed anyway')
+        if 'no icon' not in log:
+            return say(False, 'pack listing without icon', _tail(log))
+        if os.path.exists(out):
+            return say(False, 'pack listing without icon',
+                       'refused, but wrote an output folder')
+        return say(True, 'pack listing without icon', 'refused')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _check_wide(out):

@@ -2885,8 +2885,11 @@ def _write_terrain_folder(source_dir: str, out_dir: str,
                      for suffix in ('.png', '.img.png', '.bmp', '.img.bmp')
                      if f'icon{suffix}' in present), None)
     if icon_src is None:
-        # Only reachable from a listing, where nothing was scanned and so
-        # nothing was offered; a scanned folder is stopped before this.
+        # Both routes into a terrain now stop before this: a scanned folder
+        # is offered a default and refused if it declines, a listing is
+        # refused outright. Kept as a note rather than an assertion because
+        # this also runs for a plain `pack`, where the folder is whatever the
+        # caller pointed at.
         said.append('no icon here, so the terrain has none; the game shows '
                     'one on the land generator screen and will not load '
                     'without it')
@@ -4138,6 +4141,28 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
                       'r', encoding='latin-1') as fh:
                 names = [ln.strip() for ln in fh if ln.strip()]
             print(f"Using {listings[0]} ({len(names)} entries)")
+            if terrain and not _has_icon(source_dir):
+                # A listing says which entries go in the archive, and the
+                # icon is not one of them -- it sits beside Level.dir. So
+                # nothing above offers a default for it the way the scanned
+                # path does, and without this the pack would run to the end
+                # and mention the missing icon in its closing notes, long
+                # after the point where it could be dealt with.
+                #
+                # SpriteEditor kept the icon in the installed terrain rather
+                # than the build folder, so its folders reach us without one
+                # and the archive alone will not load.
+                raise PackFailed(
+                    f'Not packing {os.path.basename(source_dir)}: no icon, '
+                    f'and {listings[0]} says what to pack so none was '
+                    f'offered',
+                    hints=[f'the game shows one on the land generator screen '
+                           f'and will not load a terrain without it',
+                           f'put a 64x64 icon.png or icon.bmp in the folder; '
+                           f'`decompress` writes one as icon.img.bmp if you '
+                           f'have the terrain installed',
+                           f'or delete {listings[0]} to have the folder '
+                           f'scanned, which offers a default icon'])
         else:
             if not terrain:
                 names, scan_notes = scan_archive(source_dir)
