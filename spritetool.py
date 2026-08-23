@@ -1440,7 +1440,9 @@ def _reserve_index_0(pixels: bytes, palette: bytes):
 
 def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
              alpha_threshold: int = PNG_ALPHA_THRESHOLD,
-             palette: Optional[List[Tuple[int, int, int]]] = None
+             palette: Optional[List[Tuple[int, int, int]]] = None,
+             recolour: Optional[Dict[Tuple[int, int, int],
+                                     Tuple[int, int, int]]] = None
              ) -> Tuple[int, int, bytes, bytes, List[str]]:
     """Read a PNG as indexed pixels, the way read_bmp returns a BMP.
 
@@ -1472,6 +1474,12 @@ def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
                 drawn[i] = 1
                 key = (raw[o], raw[o + 1], raw[o + 2])
                 counts[key] = counts.get(key, 0) + 1
+    if recolour:
+        # Swap before anything is fitted, so the new colours are the ones
+        # mapped and the old ones never reach the palette.
+        for old, new in recolour.items():
+            if old in counts:
+                counts[new] = counts.get(new, 0) + counts.pop(old)
     ndrawn = sum(counts.values())
     if not ndrawn:
         # Legal, and shipped: Coral Reef's soil.img is entirely transparent.
@@ -1498,6 +1506,13 @@ def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
     # palette per colour, and a photograph brings hundreds of thousands of
     # them.
     index_of, error_sum = _map_to_palette(counts, chosen)
+    if recolour:
+        # The pixels still hold the old colours; point them at whatever the
+        # new one resolved to, so the swap reaches the picture and not just
+        # the count.
+        for old, new in recolour.items():
+            if new in index_of:
+                index_of[old] = index_of[new]
 
     if arr is not None:
         # One lookup table over the 16.7 million possible colours would be
@@ -1542,9 +1557,50 @@ def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
     return width, height, bytes(pixels), bytes(palette), notes
 
 
+def _caption_colours(palette: Sequence[Tuple[int, int, int]],
+                     art: Sequence[Tuple[int, int, int]]
+                     ) -> Optional[Tuple[Tuple[int, int, int],
+                                         Tuple[int, int, int]]]:
+    """Two palette entries to letter the debris strip with, or None.
+
+    Preferably the colours the strip already uses, kept out of room the author
+    was not spending. Where the palette is full they have to come out of it
+    instead, and then the only thing that matters is that they are not colours
+    the debris art itself draws -- select-by-colour lifts the caption by
+    colour, so a caption sharing one with the leaf under it takes the leaf too.
+
+    The two also have to be far from each other. Picking the two clearest of
+    the art alone tends to pick near-neighbours -- white and off-white, 14
+    apart out of 441 -- and a threshold that isolates the rect would then take
+    the caption with it.
+
+    Returns the pair, or None when the palette has fewer than two colours the
+    art leaves alone.
+    """
+    used = set(art)
+    free = [c for c in palette if c not in used]
+    if len(free) < 2:
+        return None
+
+    def gap(c, others):
+        return min(sum((a - b) ** 2 for a, b in zip(c, o)) ** 0.5
+                   for o in others) if others else 441.0
+
+    free.sort(key=lambda c: gap(c, used), reverse=True)
+    first = free[0]
+    # The second is the one that keeps the most room from BOTH the art and
+    # the first, so the two can be selected apart.
+    rest = free[1:]
+    if not rest:
+        return None
+    second = max(rest, key=lambda c: min(gap(c, used), gap(c, [first])))
+    return first, second
+
+
 def plan_shared_palette(sources: Dict[str, str],
                         budget: int = MAX_SHARED_COLOURS,
-                        borrowed: Sequence[str] = ()
+                        borrowed: Sequence[str] = (),
+                        keep_caption: bool = False
                         ) -> Tuple[Optional[List[Tuple[int, int, int]]], List[str]]:
     """Cut one palette for every PNG in a terrain.
 
@@ -1613,12 +1669,10 @@ def plan_shared_palette(sources: Dict[str, str],
     if not png_names:
         return None, notes
 
-    # The debris caption is kept exactly, so that select-by-colour can lift
-    # it off. Reserved whether or not the colours were counted: the debris is
-    # usually a lent picture, and a lent picture's colours never reach
-    # `counts` at all. See DEBRIS_LABEL_COLOURS.
-    keep = {c for c in DEBRIS_LABEL_COLOURS
-            if c in counts or any(n.startswith('debris') for n in png_names)}
+    # The debris caption, kept so select-by-colour can lift it off -- but only
+    # on the run that lends the strip, and only out of room the author is not
+    # using. See DEBRIS_LABEL_COLOURS and _caption_colours.
+    keep = set(DEBRIS_LABEL_COLOURS) if keep_caption else set()
     spare = {c: n for c, n in counts.items() if c not in keep}
     room = budget - len(keep)
     lent_note = (f', and {len(lent)} default(s) fitted to it afterwards'
@@ -2461,10 +2515,22 @@ def _recolour_borrowed(source_dir: str, borrowed: Dict[str, str],
         try:
             with open(dest, 'rb') as fh:
                 blob = fh.read()
-            if dest.lower().endswith('.png'):
-                w, h, pixels, pal, _ = read_png(blob, palette=list(palette))
-            else:
+            if not dest.lower().endswith('.png'):
                 continue                 # a .bmp default is already indexed
+            swap = {}
+            if os.path.basename(dest).lower().startswith('debris'):
+                # Where the caption's own colours did not survive the cut --
+                # the author's art needed the whole budget -- letter the strip
+                # in two the palette does have, chosen not to collide with the
+                # debris art. Otherwise select-by-colour cannot lift it off.
+                if any(c not in palette for c in DEBRIS_LABEL_COLOURS):
+                    art = [c for c in png_colour_counts(blob)
+                           if c not in DEBRIS_LABEL_COLOURS]
+                    pair = _caption_colours(palette, art)
+                    if pair:
+                        swap = dict(zip(DEBRIS_LABEL_COLOURS, pair))
+            w, h, pixels, pal, _ = read_png(
+                blob, palette=list(palette), recolour=swap)
             out = Image.new('RGBA', (w, h))
             flat = []
             for v in pixels:
@@ -4270,8 +4336,15 @@ def main():
             print(f"  reading {len(shared_palette)} colours from "
                   f"{PALETTE_NAME}")
         elif terrain:
+            # The caption is only worth keeping on the run that lends the
+            # strip: after that the author has either cleared it or decided
+            # to live with it, and holding two colours for a decision already
+            # made spends their budget on nothing.
+            lends_debris = any(n.lower().startswith('debris')
+                               for n in borrowed)
             shared_palette, palette_notes = plan_shared_palette(
-                picture_sources, borrowed=lent_names)
+                picture_sources, borrowed=lent_names,
+                keep_caption=lends_debris)
             for note in palette_notes:
                 print(f'  note: {note}', file=sys.stderr)
             if borrowed and shared_palette:
