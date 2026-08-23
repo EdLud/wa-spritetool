@@ -3355,9 +3355,9 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
                      f'guide budgets {MAX_SHARED_COLOURS} and warns the '
                      f'terrain will not load beyond it')
 
-    # Width only, which is the half of the guide's rule the corpus supports:
-    # of 3,120 compressed images across 143 installed terrains not one is an
-    # odd width, while 690 are an odd height and draw correctly. See
+    # Width only. Of 3,120 compressed images across 143 installed terrains not
+    # one is an odd width, while 690 are an odd height and draw correctly, and
+    # 295 uncompressed images are an odd width and draw correctly too. See
     # _pad_to_multiple_of_four.
     odd = []
     for obj in listed:
@@ -3439,38 +3439,36 @@ def _pad_to_multiple_of_four(width: int, height: int, pixels: bytes
                              ) -> Tuple[int, int, bytes, bool]:
     """Grow a picture with transparent pixels until its width divides by 4.
 
-    The guide asks for both dimensions -- "the height and width values must be
-    divisible by 4 if you wish to use .IMG compression ... the object will
-    appear corrupt in-game likely due to a bug in Sprite Editor" -- and names
-    its own culprit in the last clause. That is a bug in one 2000-era
-    authoring tool, not a rule of the format or of the game, so it binds art
-    that goes back through SpriteEditor and not art this tool writes.
+    Padding is never free. An object is anchored to a surface by one edge of
+    its box -- its `location` setting picks which -- so every added row or
+    column moves the art relative to that anchor and changes where the game
+    puts it. Confirmed in play: two builds of Cosmic differing only in
+    obj-rock1, one 104x98 and one padded to 104x100, both load and draw, and
+    the two added rows visibly change its spawn. So this only pads where
+    leaving the picture alone is worse.
 
-    Our own encoder has no such bug in either dimension: random pictures
-    round-trip exactly at every height from 1 to 19 and at widths of 105, 117,
-    65, 338 and 103. So this padding is deference to SpriteEditor, not a
-    correctness fix, and the narrower it is the better.
+    Height is never padded. 690 of the 3,120 compressed images across 143
+    installed terrains are an odd height, 670 of them core assets like
+    Cosmic's 64x49 bridge-r, and they all draw correctly.
 
-    The width half is kept because it is observed rather than deduced: a
-    terrain of objects 117, 65 and 338 wide came out mangled in-game while
-    those 124, 40 and 108 wide were perfect, and of 3,120 compressed images
-    across 143 installed terrains not one is an odd width. Among uncompressed
-    objects odd widths are ordinary, 32 of 68, so something in the path from a
-    compressed .img to the screen does depend on it.
+    Width still is. Of those same 3,120, not one is an odd width, while 295
+    uncompressed images are -- so the game's blitter handles an odd width and
+    something on the compressed path does not. A terrain of objects 117, 65
+    and 338 wide is on record as coming out mangled where 124, 40 and 108 were
+    perfect. Which component fails is unidentified: our own encoder round-trips
+    every width exactly, so it is downstream of the file.
 
-    The height half is dropped. 690 of those same images are an odd height,
-    670 of them core assets like Cosmic's 64x49 bridge-r, and they draw
-    correctly. Checked in the game rather than argued from the corpus alone:
-    two builds of Cosmic differing only in obj-rock1, one 104x98 and one
-    padded to 104x100, both load and draw. The padding was not harmless,
-    though -- an object is placed by its bottom edge, so the two added rows
-    visibly changed where the game spawned it.
+    The guide blames "a bug in Sprite Editor" and asks for both dimensions.
+    That attribution does not survive: King-Gizzard had no other way to pack a
+    terrain, and shipped Cosmic with an odd-height compressed obj-rock1 and a
+    folder of Windows BMPs the guide says SpriteEditor rejects. The tool
+    evidently accepts both, so the guide is describing confusion rather than
+    behaviour and is not a reason to pad anything.
 
-    King-Gizzard's own build script pads both dimensions with ImageMagick and
-    he still shipped that object at 104x98, so it cannot have been what
-    produced the archive.
-
-    The new pixels go on the right, where they cost nothing.
+    The new columns go on the right, which is where they do least harm rather
+    than none: an object anchored to the right wall is pushed off it. One
+    shipped object is both right-anchored and an odd width, so the case is
+    real and rare.
     """
     new_w = (width + 3) // 4 * 4
     if new_w == width:
@@ -3793,9 +3791,11 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
                 width, height, remapped)
             if grew:
                 notes.append(
-                    f'  note: {name}: widened to {width}x{height}; a '
-                    f'compressed object the game draws correctly needs a '
-                    f'width that is a multiple of 4')
+                    f'  note: {name}: widened to {width}x{height}; no shipped '
+                    f'compressed object is an odd width and some are on record '
+                    f'as drawing corrupt. The blank columns go on the right '
+                    f'and shift the art within its box, so draw it a multiple '
+                    f'of 4 wide to place it exactly')
         return encode_image(width, height, remapped, palette,
                             compress=compress_img), True
 

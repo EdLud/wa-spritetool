@@ -257,19 +257,18 @@ def _check_listing_needs_icon(no_numpy=False):
 def check_padding(no_numpy=False):
     """Compressed art is widened to a multiple of 4, and left alone otherwise.
 
-    The guide asks for both dimensions and blames "a bug in Sprite Editor",
-    which binds art going back through that tool rather than the format. Of
-    3,120 compressed images across 143 installed terrains none is an odd width
-    and 690 are an odd height, so the width half is kept and the height half
-    dropped. Padding the height moved art inside its own box -- an object is
-    placed by its bottom edge -- which changed where the game spawned it.
+    Padding is never free: an object is anchored to a surface by one edge of
+    its box, so anything added moves the art relative to that anchor and
+    changes where the game places it. Of 3,120 compressed images across 143
+    installed terrains none is an odd width and 690 are an odd height, so the
+    width is padded and the height is left alone.
     """
     sys.path.insert(0, ROOT)
     import spritetool as st
 
     good = True
-    # Our encoder has no such bug in either dimension, which is what makes the
-    # padding deference to SpriteEditor rather than a correctness fix.
+    # The file format is fine at any size -- whatever breaks on an odd width
+    # is downstream of it, so this asserts our own end is not the problem.
     palette = bytes([0, 0, 0] + [(i * 37) % 256 for i in range(45)])
     bad = []
     for w, h in ((104, 98), (105, 98), (117, 50), (65, 33), (338, 7), (8, 3)):
