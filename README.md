@@ -181,6 +181,12 @@ Default:
 Additionally it CAN have
 
 - falling debris (`debris.png`). 
+
+Default:
+
+![debris](media/debris.gif) Default Dimensions: 60 × 7680
+
+- an animated foreground layer (`front.png`) Default Dimensions: 1024 × 32000
   terrain packs and plays without one, only with an emptier sky.
 - a non-animated background layer (`_back.png`) Dimensions: 640 x 160.
   `back.png` names the same layer by the game's other route, straight into
