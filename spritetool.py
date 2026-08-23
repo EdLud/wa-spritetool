@@ -3860,9 +3860,58 @@ class SpritetoolError(Exception):
     the same as it always did, plus any lines that followed it.
     """
 
-    def __init__(self, message: str, *, hints: Sequence[str] = ()) -> None:
+    #: How the CLI announces it. Something the command line got wrong reads
+    #: as "Error: ..."; the packer's own refusals announce themselves already
+    #: ("Not packing X: ..."), and a prefix would say it twice.
+    cli_prefix = 'Error: '
+
+    def __init__(self, message: str, *, hints: Sequence[str] = (),
+                 problems: Sequence[str] = ()) -> None:
         super().__init__(message)
         self.hints = list(hints)
+        self.problems = list(problems)
+
+    def lines(self, limit: int = 10) -> List[str]:
+        """The whole complaint, formatted the way the CLI prints it."""
+        out = [f'{self.cli_prefix}{self}']
+        out += [f'  {p}' for p in self.problems[:limit]]
+        if len(self.problems) > limit:
+            out.append(f'  ... and {len(self.problems) - limit} more')
+        out += [f'  {h}' for h in self.hints]
+        return out
+
+
+class PackFailed(SpritetoolError):
+    """The folder cannot be packed as it stands.
+
+    Says so in its own words rather than through an "Error:" prefix, because
+    these sentences were written to open a report -- "Not packing X: ...",
+    "Refusing to write Y: ...".
+    """
+
+    cli_prefix = ''
+
+
+@dataclasses.dataclass
+class PackResult:
+    """What a pack did, for whoever asked for it.
+
+    The CLI turns this into its closing summary; anything else can read the
+    numbers instead of the sentences.
+    """
+
+    out_path: str
+    entries: List[str]
+    built: int
+    reused: int
+    archive_bytes: int
+    terrain: bool = False
+    largest: Optional[Tuple[str, int]] = None
+
+    @property
+    def too_big_to_send(self) -> bool:
+        """Past what wkTerrainSync will hand to another player."""
+        return self.terrain and self.archive_bytes > MAX_SYNC_BYTES
 
 
 @dataclasses.dataclass
@@ -3939,17 +3988,16 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
     return args[0], (args[1] if len(args) > 1 else None), options
 
 
-def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
+def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
     """Build a .dir from a folder, or a terrain folder from one.
 
     `pack` builds any .dir; `pack-terrain` adds everything the terrain
     guide asks for -- objects, index.txt, the palette budget, the defaults,
     the icon -- none of which means anything for a Water.dir or Gfx.dir.
 
-    Returns the process exit code, and says why on the way out. Lifted out
-    of main() unchanged so that something other than a command line can
-    reach it; the shape it should have is a separate question from where
-    it lives.
+    Returns what it did. Anything that stops it raises SpritetoolError, which
+    carries the sentence the CLI would have printed -- so the caller decides
+    whether that becomes a line on a terminal, a dialog, or a log.
     """
     target, out_arg, options = parse_pack_args(argv)
     # Unpacked into locals so the body below reads as it did. The names, and
@@ -4011,8 +4059,7 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
             else:
                 missing = _terrain_needs(source_dir)
                 if missing:
-                    print(f"Not packing: {missing}.")
-                    return 1
+                    raise PackFailed(f"Not packing: {missing}.")
                 scanned = True
                 names, _objects, scan_notes = scan_terrain(source_dir)
                 stem = 'Level'
@@ -4026,9 +4073,9 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
                 obj_settings, trouble = _settle_object_settings(
                     source_dir, _objects, None)
                 if trouble:
-                    print(f"Not packing "
-                          f"{os.path.basename(source_dir)}: {trouble}")
-                    return 1
+                    raise PackFailed(
+                        f"Not packing "
+                        f"{os.path.basename(source_dir)}: {trouble}")
                 for stem, values in obj_settings.items():
                     synthetic[f'{stem}.inf'] = format_inf(values)
                 settings = read_settings(source_dir)
@@ -4041,9 +4088,9 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
                 names, borrowed, refused = _fill_from_defaults(
                     names, source_dir, assume_defaults, first_run)
                 if refused:
-                    print(f"Not packing "
-                          f"{os.path.basename(source_dir)}: {refused}")
-                    return 1
+                    raise PackFailed(
+                        f"Not packing "
+                        f"{os.path.basename(source_dir)}: {refused}")
                 if borrowed:
                     # The art is in the folder now, so scan it again and
                     # let the copies be found like anything else. That
@@ -4077,9 +4124,9 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
     else:
         listing = target
         if not listing.lower().endswith('.dir.txt'):
-            print(f"Error: expected a folder or a file named "
-                  f"<name>.dir.txt, got {os.path.basename(listing)}")
-            return 1
+            raise SpritetoolError(
+                f"expected a folder or a file named <name>.dir.txt, "
+                f"got {os.path.basename(listing)}")
         source_dir = os.path.dirname(os.path.abspath(listing))
         stem = os.path.basename(listing)[:-len('.dir.txt')]
         with open(listing, 'r', encoding='latin-1') as fh:
@@ -4102,11 +4149,10 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
     # Writing into the folder being read would put the archive among the
     # art it was built from, where the next run would try to pack it.
     if os.path.abspath(out_dir) == os.path.abspath(source_dir):
-        print(f"Error: the output folder is the source folder "
-              f"({source_dir}).")
-        print("  Give a different one, or leave it out and a "
-              "'<name> packed' folder is made beside it.")
-        return 1
+        raise SpritetoolError(
+            f"the output folder is the source folder ({source_dir}).",
+            hints=["Give a different one, or leave it out and a "
+                   "'<name> packed' folder is made beside it."])
 
     writer = DirectoryWriter()
     built = reused = 0
@@ -4166,9 +4212,9 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
         if trouble:
             print(f'  note: {trouble}', file=sys.stderr)
         if not shared_palette:
-            print(f"Not packing: --read-palette but no palette to read. "
-                  f"Run --write-palette first, or put one at {given}.")
-            return 1
+            raise PackFailed(
+                f"Not packing: --read-palette but no palette to read. "
+                f"Run --write-palette first, or put one at {given}.")
         print(f"  reading {len(shared_palette)} colours from "
               f"{PALETTE_NAME}")
     elif terrain:
@@ -4297,25 +4343,24 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
         reused += not was_built
 
     if problems:
-        print(f"Could not pack {len(problems)} of {len(names)} entries:")
-        for p in problems[:10]:
-            print(f"  {p}")
-        if len(problems) > 10:
-            print(f"  ... and {len(problems) - 10} more")
-        return 1
+        raise PackFailed(
+            f"Could not pack {len(problems)} of {len(names)} entries:",
+            problems=problems)
 
     refusals, notes = archive_problems(packed) if terrain else ([], [])
     for note in notes:
         print(f'  note: {note}', file=sys.stderr)
     if refusals:
-        print(f"Refusing to write {out_path}: the terrain would not load.")
-        for r in refusals[:10]:
-            print(f"  {r}")
-        if len(refusals) > 10:
-            print(f"  ... and {len(refusals) - 10} more")
-        print("  (see docs/Guide.MD; pass --force to write it anyway)")
+        # Built whether or not it is raised: --force writes the archive but
+        # still says what is wrong with it, and the two must read the same.
+        trouble = PackFailed(
+            f"Refusing to write {out_path}: the terrain would not load.",
+            problems=refusals,
+            hints=["(see docs/Guide.MD; pass --force to write it anyway)"])
         if not force:
-            return 1
+            raise trouble
+        for line in trouble.lines():
+            print(line)
         print("  --force given; writing anyway.")
 
     # A terrain keeps its object settings in object_settings.txt, written
@@ -4368,18 +4413,11 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
                                           compress_img):
             print(f"  {line}")
 
-    print(f"Packed {len(names)} entries into {out_path}")
-    print(f"  encoded from source images: {built}")
-    print(f"  copied unchanged:           {reused}")
-    print(f"  archive size:               {len(archive):,} bytes")
-    if terrain and len(archive) > MAX_SYNC_BYTES:
-        biggest = max(packed.items(), key=lambda kv: len(kv[1]))
-        print(f"  note: past the {MAX_SYNC_BYTES:,} bytes wkTerrainSync "
-              f"will send. It plays here, but another player's game "
-              f"refuses the transfer.", file=sys.stderr)
-        print(f"  note: the largest entry is {biggest[0]} at "
-              f"{len(biggest[1]):,} bytes", file=sys.stderr)
-    return 0
+    biggest = max(packed.items(), key=lambda kv: len(kv[1])) if packed else None
+    return PackResult(
+        out_path=out_path, entries=list(names), built=built, reused=reused,
+        archive_bytes=len(archive), terrain=terrain,
+        largest=(biggest[0], len(biggest[1])) if biggest else None)
 
 
 def main():
@@ -4683,12 +4721,22 @@ def main():
 
     elif command in ("pack", "pack-terrain"):
         try:
-            return _pack_impl(sys.argv, command == "pack-terrain")
+            done = _pack_impl(sys.argv, command == "pack-terrain")
         except SpritetoolError as exc:
-            print(f"Error: {exc}")
-            for hint in exc.hints:
-                print(f"  {hint}")
+            for line in exc.lines():
+                print(line)
             return 1
+        print(f"Packed {len(done.entries)} entries into {done.out_path}")
+        print(f"  encoded from source images: {done.built}")
+        print(f"  copied unchanged:           {done.reused}")
+        print(f"  archive size:               {done.archive_bytes:,} bytes")
+        if done.too_big_to_send and done.largest:
+            print(f"  note: past the {MAX_SYNC_BYTES:,} bytes wkTerrainSync "
+                  f"will send. It plays here, but another player's game "
+                  f"refuses the transfer.", file=sys.stderr)
+            print(f"  note: the largest entry is {done.largest[0]} at "
+                  f"{done.largest[1]:,} bytes", file=sys.stderr)
+        return 0
 
     elif command == "land":
         if len(sys.argv) < 3:
