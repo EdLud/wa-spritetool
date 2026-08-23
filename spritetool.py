@@ -3852,6 +3852,484 @@ def _expand_folder(argv):
     return runs
 
 
+def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
+    """Build a .dir from a folder, or a terrain folder from one.
+
+    `pack` builds any .dir; `pack-terrain` adds everything the terrain
+    guide asks for -- objects, index.txt, the palette budget, the defaults,
+    the icon -- none of which means anything for a Water.dir or Gfx.dir.
+
+    Returns the process exit code, and says why on the way out. Lifted out
+    of main() unchanged so that something other than a command line can
+    reach it; the shape it should have is a separate question from where
+    it lives.
+    """
+    args = [a for a in argv[2:] if not a.startswith('-')]
+    opts = [a for a in argv[2:] if a.startswith('-')]
+    known = {'--no-compress-spr', '--no-compress-img',
+             '--no-recreate', '--opaque-img', '--force',
+             '--defaults', '--no-defaults', '--no-output-inf',
+             '--write-palette', '--read-palette', '--no-palette',
+             '--repalette',
+             '--offer-defaults'}
+    unknown = [o for o in opts if o not in known]
+    if unknown:
+        print(f"Error: unknown option(s): {', '.join(unknown)}")
+        return 1
+
+    compress_spr = '--no-compress-spr' not in opts
+    compress_img = '--no-compress-img' not in opts
+    recreate = '--no-recreate' not in opts
+    opaque = '--opaque-img' in opts
+    force = '--force' in opts
+    # On by default: an object with no parameters is given the guide's,
+    # and writing them out is what makes that visible rather than
+    # implied. Anything already there is left alone.
+    output_inf = '--no-output-inf' not in opts
+    write_palette = '--write-palette' in opts
+    read_palette = '--read-palette' in opts
+    no_palette = '--no-palette' in opts
+    # Answer the repalette question ahead of time, for a script.
+    repalette = '--repalette' in opts
+    # Ask about the defaults again on a folder that has already been
+    # packed. The settings file is what normally silences them, and it is
+    # meant to accumulate real settings, so it should not have to be
+    # deleted to get one question re-asked.
+    offer_defaults = '--offer-defaults' in opts
+    if no_palette and read_palette:
+        print("Error: --no-palette and --read-palette ask for opposite "
+              "things. One leaves the colours alone; the other fits every "
+              "picture to a palette you supply.")
+        return 1
+    # None means ask; the flags answer ahead of time, for a script.
+    assume_defaults: Optional[bool] = None
+    if '--defaults' in opts:
+        assume_defaults = True
+    if '--no-defaults' in opts:
+        assume_defaults = False
+
+    if not args:
+        print("Error: pack requires a folder or a <name>.dir.txt listing")
+        return 1
+    target = args[0]
+    if not os.path.exists(target):
+        print(f"Error: File not found: {target}")
+        return 1
+
+    # Entries the folder does not hold a file for, built here instead.
+    synthetic: Dict[str, bytes] = {}
+    # Entries whose art comes from the tool's own defaults rather than the
+    # terrain's folder, keyed by entry name.
+    extra: Dict[str, str] = {}
+    # ...and their names alone, which the palette planner needs so it can
+    # leave the whole budget to the author's own art.
+    lent_names: List[str] = []
+    # Set only on the scanned-folder path; a <name>.dir.txt listing never
+    # borrows anything, and the recolour step below still has to be able
+    # to ask.
+    borrowed: Dict[str, str] = {}
+    # Whether the entries came from reading the folder rather than from a
+    # listing. Only then is the folder the terrain's own, and only then is
+    # writing anything back into it right.
+    scanned = False
+    # A terrain's object settings, read from object_settings.txt by the
+    # scan. Empty from a listing, where there is no folder to keep one in.
+    obj_settings: Dict[str, List[int]] = {}
+
+    if os.path.isdir(target):
+        # Nothing to author: the folder is the input. A Level.dir.txt in
+        # it still wins, so a build that has one keeps its exact order.
+        source_dir = os.path.abspath(target)
+        listings = [f for f in os.listdir(source_dir)
+                    if f.lower().endswith('.dir.txt')]
+        if listings:
+            stem = listings[0][:-len('.dir.txt')]
+            with open(os.path.join(source_dir, listings[0]),
+                      'r', encoding='latin-1') as fh:
+                names = [ln.strip() for ln in fh if ln.strip()]
+            print(f"Using {listings[0]} ({len(names)} entries)")
+        else:
+            if not terrain:
+                names, scan_notes = scan_archive(source_dir)
+                stem = os.path.basename(source_dir.rstrip(os.sep))
+                for note in scan_notes:
+                    print(f'  note: {note}', file=sys.stderr)
+                print(f"Scanned {os.path.basename(source_dir)}: "
+                      f"{len(names)} entries")
+            else:
+                missing = _terrain_needs(source_dir)
+                if missing:
+                    print(f"Not packing: {missing}.")
+                    return 1
+                scanned = True
+                names, _objects, scan_notes = scan_terrain(source_dir)
+                stem = 'Level'
+                for note in scan_notes:
+                    print(f'  note: {note}', file=sys.stderr)
+                synthetic['index.txt'] = ''.join(
+                    f'{o}\r\n' for o in _objects).encode('latin-1')
+                # Not assume_defaults: that says whether to borrow art,
+                # and deleting a file the author wrote is a separate
+                # question that nothing should answer on their behalf.
+                obj_settings, trouble = _settle_object_settings(
+                    source_dir, _objects, None)
+                if trouble:
+                    print(f"Not packing "
+                          f"{os.path.basename(source_dir)}: {trouble}")
+                    return 1
+                for stem, values in obj_settings.items():
+                    synthetic[f'{stem}.inf'] = format_inf(values)
+                settings = read_settings(source_dir)
+                first_run = settings is None or offer_defaults
+                if first_run:
+                    why = ('asked for' if settings is not None
+                           else 'first run')
+                    print(f"  {why}: offering what {DEFAULTS_DIR} has "
+                          f"for anything missing")
+                names, borrowed, refused = _fill_from_defaults(
+                    names, source_dir, assume_defaults, first_run)
+                if refused:
+                    print(f"Not packing "
+                          f"{os.path.basename(source_dir)}: {refused}")
+                    return 1
+                if borrowed:
+                    # The art is in the folder now, so scan it again and
+                    # let the copies be found like anything else. That
+                    # lays them out where a later run would, so one folder
+                    # packs to one archive whether or not this was the run
+                    # that fetched them.
+                    names, _objects, _ = scan_terrain(source_dir)
+                if first_run:
+                    # Written whatever was decided, including nothing:
+                    # the point is that the questions were asked once.
+                    write_settings(source_dir, {
+                        'created': _today(),
+                        'borrowed': (','.join(sorted(borrowed))
+                                     or 'nothing'),
+                    })
+                    # They keep no claim on the palette, though: the budget
+                    # is the author's, and a default is fitted to what is
+                    # left of it rather than shrinking their work for it.
+                    lent_names = list(borrowed)
+                elif settings:
+                    # Still borrowed, still spending none of the budget.
+                    # Without this a folder packs differently the second
+                    # time: the copies are ordinary files by then, the cut
+                    # is made across them too, and it lands somewhere else
+                    # -- 13 of 112 colours in common, in one measured case.
+                    was = settings.get('borrowed', '')
+                    if was and was != 'nothing':
+                        lent_names = [n for n in was.split(',') if n]
+                print(f"Scanned {os.path.basename(source_dir)}: "
+                      f"{len(names)} entries, {len(_objects)} objects")
+    else:
+        listing = target
+        if not listing.lower().endswith('.dir.txt'):
+            print(f"Error: expected a folder or a file named "
+                  f"<name>.dir.txt, got {os.path.basename(listing)}")
+            return 1
+        source_dir = os.path.dirname(os.path.abspath(listing))
+        stem = os.path.basename(listing)[:-len('.dir.txt')]
+        with open(listing, 'r', encoding='latin-1') as fh:
+            names = [ln.strip() for ln in fh if ln.strip()]
+
+    # A terrain is a folder the game reads -- Level.dir, TEXT.img and
+    # optionally Water.dir -- so pack-terrain writes one, named after the
+    # source. `pack` writes a bare archive, which is all a Water.dir or
+    # Gfx.dir is.
+    if terrain:
+        terrain_name = os.path.basename(source_dir.rstrip(os.sep))
+        out_dir = (args[1] if len(args) > 1
+                   else os.path.join(os.path.dirname(source_dir),
+                                     f'{terrain_name} packed'))
+        out_path = os.path.join(out_dir, 'Level.dir')
+    else:
+        out_dir = args[1] if len(args) > 1 else source_dir
+        out_path = os.path.join(out_dir, stem.lower() + '.dir')
+
+    # Writing into the folder being read would put the archive among the
+    # art it was built from, where the next run would try to pack it.
+    if os.path.abspath(out_dir) == os.path.abspath(source_dir):
+        print(f"Error: the output folder is the source folder "
+              f"({source_dir}).")
+        print("  Give a different one, or leave it out and a "
+              "'<name> packed' folder is made beside it.")
+        return 1
+
+    writer = DirectoryWriter()
+    built = reused = 0
+    problems: List[str] = []
+    packed: Dict[str, bytes] = {}
+
+    # Cut one palette across the terrain before building anything: the
+    # engine aggregates every picture's colours into one table, so the
+    # budget is the archive's, not each picture's.
+    picture_sources: Dict[str, str] = {}
+    for name in names:
+        if name in synthetic:
+            continue
+        low = name.lower()
+        if not (low.endswith('.img') or low.endswith('.spr')):
+            continue
+        if '\\' in name or '/' in name:
+            continue        # a gfx0/gfx1 override, not the terrain's art
+        if low == 'icon.img':
+            continue        # a land-generator icon, not drawn in play
+        # The terrain's icon is not in here to exclude: it lives beside
+        # Level.dir, and it is spelled TEXT.img where the land texture
+        # inside is text.img -- the same name but for case.
+        if name in extra:
+            picture_sources[name] = extra[name]
+            continue
+        stem = os.path.join(source_dir, name.replace('\\', os.sep))
+        # Same candidates _pack_entry will use, or the plan is drawn from
+        # a different set of pictures than the one that gets built.
+        for cand in ([stem + e for e in PICTURE_EXTS] +
+                     [stem[:-4] + e for e in PICTURE_EXTS]):
+            if os.path.exists(cand):
+                picture_sources[name] = cand
+                break
+    # The shared palette budget is a terrain's; a Water.dir or Gfx.dir
+    # holds art the game reaches by other routes and the guide's 112 says
+    # nothing about them.
+    shared_palette = None
+    if terrain and no_palette:
+        # No terrain-wide cut. An indexed source is then packed exactly as
+        # authored -- which is the point: an author who has already fitted
+        # their art to a palette they chose gets it back untouched, rather
+        # than nudged to make room for the rest of the terrain.
+        #
+        # A PNG is still reduced if it draws more than an .img can hold,
+        # because that is the format's limit and not ours to waive; the
+        # difference is that the reduction now looks at one picture rather
+        # than at all of them together. Whether the total lands inside the
+        # guide's 112 becomes the author's business, and the count printed
+        # after packing says whether it did.
+        print("  --no-palette: each picture keeps its own colours")
+    elif terrain and read_palette:
+        # An author's own palette, taken as given rather than cut from the
+        # art: every picture is fitted to it, whatever that costs them.
+        given = os.path.join(source_dir, PALETTE_NAME)
+        shared_palette, trouble = read_palette_sheet(given)
+        if trouble:
+            print(f'  note: {trouble}', file=sys.stderr)
+        if not shared_palette:
+            print(f"Not packing: --read-palette but no palette to read. "
+                  f"Run --write-palette first, or put one at {given}.")
+            return 1
+        print(f"  reading {len(shared_palette)} colours from "
+              f"{PALETTE_NAME}")
+    elif terrain:
+        # Only when the art will not fit as it is. An author whose own
+        # pictures already sit inside the 112 needs nothing done to them:
+        # their colours become the terrain's palette, the borrowed art is
+        # fitted to those, and packing again does exactly the same thing.
+        # Cutting regardless is what used to make a folder drift -- a lent
+        # picture was remapped, became ordinary, and was remapped again
+        # against a palette that had moved meanwhile.
+        own = _authors_colours(picture_sources, lent_names)
+        if own is not None and len(own) <= MAX_SHARED_COLOURS:
+            shared_palette = sorted(own)
+            print(f"  {len(shared_palette)} colours in the art, inside "
+                  f"the {MAX_SHARED_COLOURS} a terrain may hold; nothing "
+                  f"moved")
+        elif own is not None:
+            # Past the budget, so something has to give. Fitting is a
+            # statistical shift rather than a lossless step, and its
+            # result depends on the art it was cut from -- so it is asked
+            # for rather than done quietly, and declining still builds.
+            take = repalette
+            if not take:
+                print(f"This terrain draws {len(own)} colours and may "
+                      f"hold {MAX_SHARED_COLOURS}.")
+                print("  Fitting them to one palette shifts colours by "
+                      "statistics, and shifts them differently as the art "
+                      "changes.")
+                take = ask("Repalette it now?", assume_defaults)
+            else:
+                print("  --repalette: performing a statistical palette "
+                      "shift; the output may drift as the art changes")
+            if take:
+                shared_palette, palette_notes = plan_shared_palette(
+                    picture_sources, borrowed=lent_names)
+                for note in palette_notes:
+                    print(f'  note: {note}', file=sys.stderr)
+            else:
+                print("  packing as authored; the colour count after "
+                      "packing says what the total came to")
+
+        if borrowed and shared_palette:
+            # Written back fitted, so the folder holds what the archive
+            # holds. Until now a lent picture was mapped on the way into
+            # the archive and left untouched on disk, which made the next
+            # pack a different one: the copies were ordinary files by
+            # then, and cut alongside the author's art rather than around
+            # it.
+            redone = _recolour_borrowed(source_dir, borrowed,
+                                        shared_palette)
+            if redone:
+                print(f"  fitted {len(redone)} borrowed picture(s) to "
+                      f"the terrain's palette in "
+                      f"{os.path.basename(source_dir)}")
+
+    def _plan(name: str):
+        """What packing one entry needs, worked out before any of it runs."""
+        rel = name.replace('\\', os.sep)
+        # A gfx0/gfx1 override is painted with the slot's own fixed table,
+        # not with the terrain's palette and not with the one in its own
+        # header, so it has to be fitted to that table instead. Forced,
+        # because an indexed source is no more free to stray than a PNG.
+        entry_palette = shared_palette
+        # Every picture is fitted to the terrain's palette, indexed
+        # sources included -- see _pack_entry for why the .bmp exemption
+        # went. Without this the cut is planned across everything and
+        # then only applied to some of it, and the archive ends up past
+        # the budget the plan was made to keep.
+        force_this = True
+        slot = GFX_PALETTES.get(rel.split(os.sep)[0].lower())
+        if slot is not None:
+            entry_palette = list(slot)
+            force_this = True
+        return (os.path.join(source_dir, rel), name, recreate,
+                compress_spr, compress_img, opaque, entry_palette,
+                extra.get(name), force_this)
+
+    todo = [n for n in names if n not in synthetic]
+    results: Dict[str, object] = {}
+    # Entries do not depend on each other, so they can be built at once --
+    # but they have to be ADDED in the order names gives, since that is
+    # the archive's own order and a listing may have fixed it deliberately.
+    if len(todo) >= _PARALLEL_MIN_ENTRIES:
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+            workers = min(len(todo), (os.cpu_count() or 1))
+            if workers < 2:
+                raise RuntimeError('one core')
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                for name, outcome in zip(todo, pool.map(
+                        _pack_entry_safe, [_plan(n) for n in todo],
+                        chunksize=1)):
+                    results[name] = outcome
+        except Exception:
+            results = {}
+    for name in names:
+        if name in synthetic:
+            payload = synthetic[name]
+            for note in entry_notes(name, payload):
+                print(f'  note: {note}', file=sys.stderr)
+            writer.add(name, payload)
+            packed[name] = payload
+            built += 1
+            continue
+        outcome = results.get(name)
+        if outcome is None:
+            try:
+                outcome = _pack_entry_safe(_plan(name))
+            except Exception as exc:         # pragma: no cover -- defensive
+                outcome = ('error', str(exc), [])
+        kind, value, notes_out = outcome
+        for note in notes_out:
+            print(note, file=sys.stderr)
+        if kind == 'error':
+            problems.append(f"{name}: {value}")
+            continue
+        if value is None:
+            problems.append(f"{name}: no source file found")
+            continue
+        payload, was_built = value
+        for note in entry_notes(name, payload):
+            print(f'  note: {note}', file=sys.stderr)
+        writer.add(name, payload)
+        packed[name] = payload
+        built += was_built
+        reused += not was_built
+
+    if problems:
+        print(f"Could not pack {len(problems)} of {len(names)} entries:")
+        for p in problems[:10]:
+            print(f"  {p}")
+        if len(problems) > 10:
+            print(f"  ... and {len(problems) - 10} more")
+        return 1
+
+    refusals, notes = archive_problems(packed) if terrain else ([], [])
+    for note in notes:
+        print(f'  note: {note}', file=sys.stderr)
+    if refusals:
+        print(f"Refusing to write {out_path}: the terrain would not load.")
+        for r in refusals[:10]:
+            print(f"  {r}")
+        if len(refusals) > 10:
+            print(f"  ... and {len(refusals) - 10} more")
+        print("  (see docs/Guide.MD; pass --force to write it anyway)")
+        if not force:
+            return 1
+        print("  --force given; writing anyway.")
+
+    # A terrain keeps its object settings in object_settings.txt, written
+    # by the scan; writing them out again one file to an object would put
+    # them in two places and undo the consolidation on the next run.
+    if output_inf and terrain and scanned and not obj_settings:
+        # An object's parameters as packed, written back beside the art so
+        # that whatever it was given -- the defaults, most often -- is
+        # visible and editable rather than staying implied. Only for a
+        # scanned folder: a listing may sit anywhere, and writing files
+        # next to one is not what was asked for.
+        #
+        # Written as .txt: the archive needs the entry to be a .inf, but on
+        # disk a .txt is the friendlier of the two names to open, and the
+        # tool reads either.
+        written = kept = 0
+        for name, payload in sorted(packed.items()):
+            if not name.lower().endswith('.inf'):
+                continue
+            rel = name.replace('\\', os.sep)
+            base = os.path.join(source_dir, rel[:-4])
+            if os.path.exists(base + '.inf') or os.path.exists(base + '.txt'):
+                kept += 1           # authored, so not overwritten
+                continue
+            os.makedirs(os.path.dirname(base + '.txt'), exist_ok=True)
+            with open(base + '.txt', 'wb') as fh:
+                fh.write(payload)
+            written += 1
+        print(f"Wrote {written} parameter file(s) to "
+              f"{os.path.basename(source_dir)}"
+              + (f", left {kept} already there alone" if kept else ""))
+
+    archive = writer.build()
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with open(out_path, 'wb') as fh:
+        fh.write(archive)
+
+    if write_palette and terrain:
+        # Into the source folder, not the output: it is for the author to
+        # look at and hand back with --read-palette, where the art is.
+        dest = os.path.join(source_dir if scanned else out_dir,
+                            PALETTE_NAME)
+        print(f"  {_write_palette_sheet(packed, dest)}")
+    elif write_palette:
+        print("  note: --write-palette is for a terrain; the 112-colour "
+              "budget says nothing about other archives", file=sys.stderr)
+
+    if terrain:
+        for line in _write_terrain_folder(source_dir, out_dir,
+                                          compress_img):
+            print(f"  {line}")
+
+    print(f"Packed {len(names)} entries into {out_path}")
+    print(f"  encoded from source images: {built}")
+    print(f"  copied unchanged:           {reused}")
+    print(f"  archive size:               {len(archive):,} bytes")
+    if terrain and len(archive) > MAX_SYNC_BYTES:
+        biggest = max(packed.items(), key=lambda kv: len(kv[1]))
+        print(f"  note: past the {MAX_SYNC_BYTES:,} bytes wkTerrainSync "
+              f"will send. It plays here, but another player's game "
+              f"refuses the transfer.", file=sys.stderr)
+        print(f"  note: the largest entry is {biggest[0]} at "
+              f"{len(biggest[1]):,} bytes", file=sys.stderr)
+    return 0
+
+
 def main():
     """Main entry point"""
     if len(sys.argv) < 2:
@@ -4152,475 +4630,7 @@ def main():
         return 0
 
     elif command in ("pack", "pack-terrain"):
-        # `pack` builds any .dir; `pack-terrain` adds everything the terrain
-        # guide asks for -- objects, index.txt, the palette budget, the
-        # defaults, the icon -- none of which means anything for a Water.dir
-        # or Gfx.dir.
-        terrain = command == "pack-terrain"
-        args = [a for a in sys.argv[2:] if not a.startswith('-')]
-        opts = [a for a in sys.argv[2:] if a.startswith('-')]
-        known = {'--no-compress-spr', '--no-compress-img',
-                 '--no-recreate', '--opaque-img', '--force',
-                 '--defaults', '--no-defaults', '--no-output-inf',
-                 '--write-palette', '--read-palette', '--no-palette',
-                 '--repalette',
-                 '--offer-defaults'}
-        unknown = [o for o in opts if o not in known]
-        if unknown:
-            print(f"Error: unknown option(s): {', '.join(unknown)}")
-            return 1
-
-        compress_spr = '--no-compress-spr' not in opts
-        compress_img = '--no-compress-img' not in opts
-        recreate = '--no-recreate' not in opts
-        opaque = '--opaque-img' in opts
-        force = '--force' in opts
-        # On by default: an object with no parameters is given the guide's,
-        # and writing them out is what makes that visible rather than
-        # implied. Anything already there is left alone.
-        output_inf = '--no-output-inf' not in opts
-        write_palette = '--write-palette' in opts
-        read_palette = '--read-palette' in opts
-        no_palette = '--no-palette' in opts
-        # Answer the repalette question ahead of time, for a script.
-        repalette = '--repalette' in opts
-        # Ask about the defaults again on a folder that has already been
-        # packed. The settings file is what normally silences them, and it is
-        # meant to accumulate real settings, so it should not have to be
-        # deleted to get one question re-asked.
-        offer_defaults = '--offer-defaults' in opts
-        if no_palette and read_palette:
-            print("Error: --no-palette and --read-palette ask for opposite "
-                  "things. One leaves the colours alone; the other fits every "
-                  "picture to a palette you supply.")
-            return 1
-        # None means ask; the flags answer ahead of time, for a script.
-        assume_defaults: Optional[bool] = None
-        if '--defaults' in opts:
-            assume_defaults = True
-        if '--no-defaults' in opts:
-            assume_defaults = False
-
-        if not args:
-            print("Error: pack requires a folder or a <name>.dir.txt listing")
-            return 1
-        target = args[0]
-        if not os.path.exists(target):
-            print(f"Error: File not found: {target}")
-            return 1
-
-        # Entries the folder does not hold a file for, built here instead.
-        synthetic: Dict[str, bytes] = {}
-        # Entries whose art comes from the tool's own defaults rather than the
-        # terrain's folder, keyed by entry name.
-        extra: Dict[str, str] = {}
-        # ...and their names alone, which the palette planner needs so it can
-        # leave the whole budget to the author's own art.
-        lent_names: List[str] = []
-        # Set only on the scanned-folder path; a <name>.dir.txt listing never
-        # borrows anything, and the recolour step below still has to be able
-        # to ask.
-        borrowed: Dict[str, str] = {}
-        # Whether the entries came from reading the folder rather than from a
-        # listing. Only then is the folder the terrain's own, and only then is
-        # writing anything back into it right.
-        scanned = False
-        # A terrain's object settings, read from object_settings.txt by the
-        # scan. Empty from a listing, where there is no folder to keep one in.
-        obj_settings: Dict[str, List[int]] = {}
-
-        if os.path.isdir(target):
-            # Nothing to author: the folder is the input. A Level.dir.txt in
-            # it still wins, so a build that has one keeps its exact order.
-            source_dir = os.path.abspath(target)
-            listings = [f for f in os.listdir(source_dir)
-                        if f.lower().endswith('.dir.txt')]
-            if listings:
-                stem = listings[0][:-len('.dir.txt')]
-                with open(os.path.join(source_dir, listings[0]),
-                          'r', encoding='latin-1') as fh:
-                    names = [ln.strip() for ln in fh if ln.strip()]
-                print(f"Using {listings[0]} ({len(names)} entries)")
-            else:
-                if not terrain:
-                    names, scan_notes = scan_archive(source_dir)
-                    stem = os.path.basename(source_dir.rstrip(os.sep))
-                    for note in scan_notes:
-                        print(f'  note: {note}', file=sys.stderr)
-                    print(f"Scanned {os.path.basename(source_dir)}: "
-                          f"{len(names)} entries")
-                else:
-                    missing = _terrain_needs(source_dir)
-                    if missing:
-                        print(f"Not packing: {missing}.")
-                        return 1
-                    scanned = True
-                    names, _objects, scan_notes = scan_terrain(source_dir)
-                    stem = 'Level'
-                    for note in scan_notes:
-                        print(f'  note: {note}', file=sys.stderr)
-                    synthetic['index.txt'] = ''.join(
-                        f'{o}\r\n' for o in _objects).encode('latin-1')
-                    # Not assume_defaults: that says whether to borrow art,
-                    # and deleting a file the author wrote is a separate
-                    # question that nothing should answer on their behalf.
-                    obj_settings, trouble = _settle_object_settings(
-                        source_dir, _objects, None)
-                    if trouble:
-                        print(f"Not packing "
-                              f"{os.path.basename(source_dir)}: {trouble}")
-                        return 1
-                    for stem, values in obj_settings.items():
-                        synthetic[f'{stem}.inf'] = format_inf(values)
-                    settings = read_settings(source_dir)
-                    first_run = settings is None or offer_defaults
-                    if first_run:
-                        why = ('asked for' if settings is not None
-                               else 'first run')
-                        print(f"  {why}: offering what {DEFAULTS_DIR} has "
-                              f"for anything missing")
-                    names, borrowed, refused = _fill_from_defaults(
-                        names, source_dir, assume_defaults, first_run)
-                    if refused:
-                        print(f"Not packing "
-                              f"{os.path.basename(source_dir)}: {refused}")
-                        return 1
-                    if borrowed:
-                        # The art is in the folder now, so scan it again and
-                        # let the copies be found like anything else. That
-                        # lays them out where a later run would, so one folder
-                        # packs to one archive whether or not this was the run
-                        # that fetched them.
-                        names, _objects, _ = scan_terrain(source_dir)
-                    if first_run:
-                        # Written whatever was decided, including nothing:
-                        # the point is that the questions were asked once.
-                        write_settings(source_dir, {
-                            'created': _today(),
-                            'borrowed': (','.join(sorted(borrowed))
-                                         or 'nothing'),
-                        })
-                        # They keep no claim on the palette, though: the budget
-                        # is the author's, and a default is fitted to what is
-                        # left of it rather than shrinking their work for it.
-                        lent_names = list(borrowed)
-                    elif settings:
-                        # Still borrowed, still spending none of the budget.
-                        # Without this a folder packs differently the second
-                        # time: the copies are ordinary files by then, the cut
-                        # is made across them too, and it lands somewhere else
-                        # -- 13 of 112 colours in common, in one measured case.
-                        was = settings.get('borrowed', '')
-                        if was and was != 'nothing':
-                            lent_names = [n for n in was.split(',') if n]
-                    print(f"Scanned {os.path.basename(source_dir)}: "
-                          f"{len(names)} entries, {len(_objects)} objects")
-        else:
-            listing = target
-            if not listing.lower().endswith('.dir.txt'):
-                print(f"Error: expected a folder or a file named "
-                      f"<name>.dir.txt, got {os.path.basename(listing)}")
-                return 1
-            source_dir = os.path.dirname(os.path.abspath(listing))
-            stem = os.path.basename(listing)[:-len('.dir.txt')]
-            with open(listing, 'r', encoding='latin-1') as fh:
-                names = [ln.strip() for ln in fh if ln.strip()]
-
-        # A terrain is a folder the game reads -- Level.dir, TEXT.img and
-        # optionally Water.dir -- so pack-terrain writes one, named after the
-        # source. `pack` writes a bare archive, which is all a Water.dir or
-        # Gfx.dir is.
-        if terrain:
-            terrain_name = os.path.basename(source_dir.rstrip(os.sep))
-            out_dir = (args[1] if len(args) > 1
-                       else os.path.join(os.path.dirname(source_dir),
-                                         f'{terrain_name} packed'))
-            out_path = os.path.join(out_dir, 'Level.dir')
-        else:
-            out_dir = args[1] if len(args) > 1 else source_dir
-            out_path = os.path.join(out_dir, stem.lower() + '.dir')
-
-        # Writing into the folder being read would put the archive among the
-        # art it was built from, where the next run would try to pack it.
-        if os.path.abspath(out_dir) == os.path.abspath(source_dir):
-            print(f"Error: the output folder is the source folder "
-                  f"({source_dir}).")
-            print("  Give a different one, or leave it out and a "
-                  "'<name> packed' folder is made beside it.")
-            return 1
-
-        writer = DirectoryWriter()
-        built = reused = 0
-        problems: List[str] = []
-        packed: Dict[str, bytes] = {}
-
-        # Cut one palette across the terrain before building anything: the
-        # engine aggregates every picture's colours into one table, so the
-        # budget is the archive's, not each picture's.
-        picture_sources: Dict[str, str] = {}
-        for name in names:
-            if name in synthetic:
-                continue
-            low = name.lower()
-            if not (low.endswith('.img') or low.endswith('.spr')):
-                continue
-            if '\\' in name or '/' in name:
-                continue        # a gfx0/gfx1 override, not the terrain's art
-            if low == 'icon.img':
-                continue        # a land-generator icon, not drawn in play
-            # The terrain's icon is not in here to exclude: it lives beside
-            # Level.dir, and it is spelled TEXT.img where the land texture
-            # inside is text.img -- the same name but for case.
-            if name in extra:
-                picture_sources[name] = extra[name]
-                continue
-            stem = os.path.join(source_dir, name.replace('\\', os.sep))
-            # Same candidates _pack_entry will use, or the plan is drawn from
-            # a different set of pictures than the one that gets built.
-            for cand in ([stem + e for e in PICTURE_EXTS] +
-                         [stem[:-4] + e for e in PICTURE_EXTS]):
-                if os.path.exists(cand):
-                    picture_sources[name] = cand
-                    break
-        # The shared palette budget is a terrain's; a Water.dir or Gfx.dir
-        # holds art the game reaches by other routes and the guide's 112 says
-        # nothing about them.
-        shared_palette = None
-        if terrain and no_palette:
-            # No terrain-wide cut. An indexed source is then packed exactly as
-            # authored -- which is the point: an author who has already fitted
-            # their art to a palette they chose gets it back untouched, rather
-            # than nudged to make room for the rest of the terrain.
-            #
-            # A PNG is still reduced if it draws more than an .img can hold,
-            # because that is the format's limit and not ours to waive; the
-            # difference is that the reduction now looks at one picture rather
-            # than at all of them together. Whether the total lands inside the
-            # guide's 112 becomes the author's business, and the count printed
-            # after packing says whether it did.
-            print("  --no-palette: each picture keeps its own colours")
-        elif terrain and read_palette:
-            # An author's own palette, taken as given rather than cut from the
-            # art: every picture is fitted to it, whatever that costs them.
-            given = os.path.join(source_dir, PALETTE_NAME)
-            shared_palette, trouble = read_palette_sheet(given)
-            if trouble:
-                print(f'  note: {trouble}', file=sys.stderr)
-            if not shared_palette:
-                print(f"Not packing: --read-palette but no palette to read. "
-                      f"Run --write-palette first, or put one at {given}.")
-                return 1
-            print(f"  reading {len(shared_palette)} colours from "
-                  f"{PALETTE_NAME}")
-        elif terrain:
-            # Only when the art will not fit as it is. An author whose own
-            # pictures already sit inside the 112 needs nothing done to them:
-            # their colours become the terrain's palette, the borrowed art is
-            # fitted to those, and packing again does exactly the same thing.
-            # Cutting regardless is what used to make a folder drift -- a lent
-            # picture was remapped, became ordinary, and was remapped again
-            # against a palette that had moved meanwhile.
-            own = _authors_colours(picture_sources, lent_names)
-            if own is not None and len(own) <= MAX_SHARED_COLOURS:
-                shared_palette = sorted(own)
-                print(f"  {len(shared_palette)} colours in the art, inside "
-                      f"the {MAX_SHARED_COLOURS} a terrain may hold; nothing "
-                      f"moved")
-            elif own is not None:
-                # Past the budget, so something has to give. Fitting is a
-                # statistical shift rather than a lossless step, and its
-                # result depends on the art it was cut from -- so it is asked
-                # for rather than done quietly, and declining still builds.
-                take = repalette
-                if not take:
-                    print(f"This terrain draws {len(own)} colours and may "
-                          f"hold {MAX_SHARED_COLOURS}.")
-                    print("  Fitting them to one palette shifts colours by "
-                          "statistics, and shifts them differently as the art "
-                          "changes.")
-                    take = ask("Repalette it now?", assume_defaults)
-                else:
-                    print("  --repalette: performing a statistical palette "
-                          "shift; the output may drift as the art changes")
-                if take:
-                    shared_palette, palette_notes = plan_shared_palette(
-                        picture_sources, borrowed=lent_names)
-                    for note in palette_notes:
-                        print(f'  note: {note}', file=sys.stderr)
-                else:
-                    print("  packing as authored; the colour count after "
-                          "packing says what the total came to")
-
-            if borrowed and shared_palette:
-                # Written back fitted, so the folder holds what the archive
-                # holds. Until now a lent picture was mapped on the way into
-                # the archive and left untouched on disk, which made the next
-                # pack a different one: the copies were ordinary files by
-                # then, and cut alongside the author's art rather than around
-                # it.
-                redone = _recolour_borrowed(source_dir, borrowed,
-                                            shared_palette)
-                if redone:
-                    print(f"  fitted {len(redone)} borrowed picture(s) to "
-                          f"the terrain's palette in "
-                          f"{os.path.basename(source_dir)}")
-
-        def _plan(name: str):
-            """What packing one entry needs, worked out before any of it runs."""
-            rel = name.replace('\\', os.sep)
-            # A gfx0/gfx1 override is painted with the slot's own fixed table,
-            # not with the terrain's palette and not with the one in its own
-            # header, so it has to be fitted to that table instead. Forced,
-            # because an indexed source is no more free to stray than a PNG.
-            entry_palette = shared_palette
-            # Every picture is fitted to the terrain's palette, indexed
-            # sources included -- see _pack_entry for why the .bmp exemption
-            # went. Without this the cut is planned across everything and
-            # then only applied to some of it, and the archive ends up past
-            # the budget the plan was made to keep.
-            force_this = True
-            slot = GFX_PALETTES.get(rel.split(os.sep)[0].lower())
-            if slot is not None:
-                entry_palette = list(slot)
-                force_this = True
-            return (os.path.join(source_dir, rel), name, recreate,
-                    compress_spr, compress_img, opaque, entry_palette,
-                    extra.get(name), force_this)
-
-        todo = [n for n in names if n not in synthetic]
-        results: Dict[str, object] = {}
-        # Entries do not depend on each other, so they can be built at once --
-        # but they have to be ADDED in the order names gives, since that is
-        # the archive's own order and a listing may have fixed it deliberately.
-        if len(todo) >= _PARALLEL_MIN_ENTRIES:
-            try:
-                from concurrent.futures import ProcessPoolExecutor
-                workers = min(len(todo), (os.cpu_count() or 1))
-                if workers < 2:
-                    raise RuntimeError('one core')
-                with ProcessPoolExecutor(max_workers=workers) as pool:
-                    for name, outcome in zip(todo, pool.map(
-                            _pack_entry_safe, [_plan(n) for n in todo],
-                            chunksize=1)):
-                        results[name] = outcome
-            except Exception:
-                results = {}
-        for name in names:
-            if name in synthetic:
-                payload = synthetic[name]
-                for note in entry_notes(name, payload):
-                    print(f'  note: {note}', file=sys.stderr)
-                writer.add(name, payload)
-                packed[name] = payload
-                built += 1
-                continue
-            outcome = results.get(name)
-            if outcome is None:
-                try:
-                    outcome = _pack_entry_safe(_plan(name))
-                except Exception as exc:         # pragma: no cover -- defensive
-                    outcome = ('error', str(exc), [])
-            kind, value, notes_out = outcome
-            for note in notes_out:
-                print(note, file=sys.stderr)
-            if kind == 'error':
-                problems.append(f"{name}: {value}")
-                continue
-            if value is None:
-                problems.append(f"{name}: no source file found")
-                continue
-            payload, was_built = value
-            for note in entry_notes(name, payload):
-                print(f'  note: {note}', file=sys.stderr)
-            writer.add(name, payload)
-            packed[name] = payload
-            built += was_built
-            reused += not was_built
-
-        if problems:
-            print(f"Could not pack {len(problems)} of {len(names)} entries:")
-            for p in problems[:10]:
-                print(f"  {p}")
-            if len(problems) > 10:
-                print(f"  ... and {len(problems) - 10} more")
-            return 1
-
-        refusals, notes = archive_problems(packed) if terrain else ([], [])
-        for note in notes:
-            print(f'  note: {note}', file=sys.stderr)
-        if refusals:
-            print(f"Refusing to write {out_path}: the terrain would not load.")
-            for r in refusals[:10]:
-                print(f"  {r}")
-            if len(refusals) > 10:
-                print(f"  ... and {len(refusals) - 10} more")
-            print("  (see docs/Guide.MD; pass --force to write it anyway)")
-            if not force:
-                return 1
-            print("  --force given; writing anyway.")
-
-        # A terrain keeps its object settings in object_settings.txt, written
-        # by the scan; writing them out again one file to an object would put
-        # them in two places and undo the consolidation on the next run.
-        if output_inf and terrain and scanned and not obj_settings:
-            # An object's parameters as packed, written back beside the art so
-            # that whatever it was given -- the defaults, most often -- is
-            # visible and editable rather than staying implied. Only for a
-            # scanned folder: a listing may sit anywhere, and writing files
-            # next to one is not what was asked for.
-            #
-            # Written as .txt: the archive needs the entry to be a .inf, but on
-            # disk a .txt is the friendlier of the two names to open, and the
-            # tool reads either.
-            written = kept = 0
-            for name, payload in sorted(packed.items()):
-                if not name.lower().endswith('.inf'):
-                    continue
-                rel = name.replace('\\', os.sep)
-                base = os.path.join(source_dir, rel[:-4])
-                if os.path.exists(base + '.inf') or os.path.exists(base + '.txt'):
-                    kept += 1           # authored, so not overwritten
-                    continue
-                os.makedirs(os.path.dirname(base + '.txt'), exist_ok=True)
-                with open(base + '.txt', 'wb') as fh:
-                    fh.write(payload)
-                written += 1
-            print(f"Wrote {written} parameter file(s) to "
-                  f"{os.path.basename(source_dir)}"
-                  + (f", left {kept} already there alone" if kept else ""))
-
-        archive = writer.build()
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-        with open(out_path, 'wb') as fh:
-            fh.write(archive)
-
-        if write_palette and terrain:
-            # Into the source folder, not the output: it is for the author to
-            # look at and hand back with --read-palette, where the art is.
-            dest = os.path.join(source_dir if scanned else out_dir,
-                                PALETTE_NAME)
-            print(f"  {_write_palette_sheet(packed, dest)}")
-        elif write_palette:
-            print("  note: --write-palette is for a terrain; the 112-colour "
-                  "budget says nothing about other archives", file=sys.stderr)
-
-        if terrain:
-            for line in _write_terrain_folder(source_dir, out_dir,
-                                              compress_img):
-                print(f"  {line}")
-
-        print(f"Packed {len(names)} entries into {out_path}")
-        print(f"  encoded from source images: {built}")
-        print(f"  copied unchanged:           {reused}")
-        print(f"  archive size:               {len(archive):,} bytes")
-        if terrain and len(archive) > MAX_SYNC_BYTES:
-            biggest = max(packed.items(), key=lambda kv: len(kv[1]))
-            print(f"  note: past the {MAX_SYNC_BYTES:,} bytes wkTerrainSync "
-                  f"will send. It plays here, but another player's game "
-                  f"refuses the transfer.", file=sys.stderr)
-            print(f"  note: the largest entry is {biggest[0]} at "
-                  f"{len(biggest[1]):,} bytes", file=sys.stderr)
-        return 0
+        return _pack_impl(sys.argv, command == "pack-terrain")
 
     elif command == "land":
         if len(sys.argv) < 3:
