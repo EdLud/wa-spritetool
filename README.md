@@ -160,9 +160,7 @@ MUST haves:
 Default:
 
 ![landtexture](presets/text.png)
-- a soil texture (`soil.png`). Dimensions: 256 x 256. The default is an empty
-  image, which shows the background through destroyed land rather than
-  someone else's dirt.
+- a soil texture (`soil.png`). Dimensions: 256 x 256. The default is an empty image
 - a grass texture (`grass.png`). Dimensions: 136 pixels wide, variable height. This is a an image that combines 3 parts: floor (64 pixels wide), ceiling (64 pixels wide), the colour that is shown when terrain is destroyed (8 pixels wide).
 
 Default:
@@ -174,11 +172,7 @@ Default:
 Default:
 
 ![bridge-l](presets/bridge-l.png) ![bridge](presets/bridge.png) ![bridge-r](presets/bridge-r.png) 
-- an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64. The guide asks for "17 colours", meaning 16 drawn ones
-and transparency; more than that works here -- what an icon cannot have is a
-compressed palette that is not a multiple of four entries, which pads before
-the pixels and takes down the land generator screen, so the tool rounds the
-palette up by repeating a colour already in it.
+- an icon (`icon.png`) (traditionally this was called `TEXT.img.bmp`, which was confusing but is still accepted, the tool will treat a 64x64 picture as logo and a 256x256 picture as texture, should the author have confused the names). Dimensions: 64x64, Recommended colours: 17.
 
 Default:
 
@@ -186,7 +180,7 @@ Default:
 
 Additionally it CAN have
 
-- falling debris (`debris.png`). The guide calls this required; it is not. A
+- falling debris (`debris.png`). 
   terrain packs and plays without one, only with an emptier sky.
 - a non-animated background layer (`_back.png`) Dimensions: 640 x 160.
   `back.png` names the same layer by the game's other route, straight into
