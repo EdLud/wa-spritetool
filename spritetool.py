@@ -4236,7 +4236,40 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
     return args[0], (args[1] if len(args) > 1 else None), options
 
 
-def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
+def pack_terrain(folder: str, out_dir: Optional[str] = None,
+                 options: Optional[Options] = None,
+                 ask: Optional[Asker] = None) -> PackResult:
+    """Build a terrain folder -- Level.dir, its icon, and Water.dir -- from art.
+
+    The entry point for anything that is not the command line. Give it a
+    folder and it does what `pack-terrain` does, returning a PackResult and
+    raising SpritetoolError rather than printing and exiting.
+
+    `ask` decides the questions packing cannot answer alone. The default
+    answers no to everything not already settled in `options.answers`, which
+    is the safe reading for a caller with nobody to ask -- declining a
+    required piece stops the build rather than guessing at it. Pass
+    `cli_asker()` for a terminal, or your own callback for a window.
+    """
+    return _pack_impl(folder, out_dir, options or Options(), True,
+                      ask or answer_with((options or Options()).answers))
+
+
+def pack_archive(folder: str, out_dir: Optional[str] = None,
+                 options: Optional[Options] = None,
+                 ask: Optional[Asker] = None) -> PackResult:
+    """Build a plain .dir from a folder, as `pack` does.
+
+    Everything the terrain guide asks for -- the object index, the palette
+    budget, the icon -- means nothing for a Water.dir or a Gfx.dir, so none
+    of it is applied here.
+    """
+    return _pack_impl(folder, out_dir, options or Options(), False,
+                      ask or answer_with((options or Options()).answers))
+
+
+def _pack_impl(target: str, out_arg: Optional[str], options: Options,
+               terrain: bool, ask: Asker) -> PackResult:
     """Build a .dir from a folder, or a terrain folder from one.
 
     `pack` builds any .dir; `pack-terrain` adds everything the terrain
@@ -4247,7 +4280,6 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
     carries the sentence the CLI would have printed -- so the caller decides
     whether that becomes a line on a terminal, a dialog, or a log.
     """
-    target, out_arg, options = parse_pack_args(argv)
     # Unpacked into locals so the body below reads as it did. The names, and
     # what each one means, are Options' business now.
     compress_spr = options.compress_spr
@@ -4266,9 +4298,6 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> PackResult:
     # initializer instead of from an argument it would have to be handed.
     global _PARALLEL
     _PARALLEL = options.parallel()
-    # How anything the tool will not decide alone gets decided. The CLI reads
-    # a terminal where the flags have not already settled it.
-    ask = cli_asker(options.answers)
     args = [target] + ([out_arg] if out_arg else [])
 
     # Entries the folder does not hold a file for, built here instead.
@@ -4996,7 +5025,11 @@ def main():
 
     elif command in ("pack", "pack-terrain"):
         try:
-            done = _pack_impl(sys.argv, command == "pack-terrain")
+            target, out_arg, options = parse_pack_args(sys.argv)
+            # The CLI reads a terminal for anything the flags left open.
+            done = _pack_impl(target, out_arg, options,
+                              command == "pack-terrain",
+                              cli_asker(options.answers))
         except SpritetoolError as exc:
             for line in exc.lines():
                 print(line)

@@ -40,3 +40,7 @@ __pycache__/
 # pull back in after .DS_Store had already excluded them.
 .DS_Store
 **/.DS_Store
+
+# Local virtualenv for GUI work. PySide6 is ~400 MB and belongs to the
+# machine, not the repo.
+.venv/
