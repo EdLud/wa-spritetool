@@ -4573,8 +4573,15 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
             # for rather than done quietly, and declining still builds.
             take = repalette
             if not take:
+                over = len(own) - MAX_SHARED_COLOURS
                 print(f"This terrain draws {len(own)} colours and may "
-                      f"hold {MAX_SHARED_COLOURS}.")
+                      f"hold {MAX_SHARED_COLOURS} -- {over} over.")
+                # What declining actually costs, which the old wording left
+                # out: it is not that the extra colours are dropped tidily,
+                # it is that the game shows the terrain differently from the
+                # art. Said plainly, because it is the reason to say yes.
+                print("  Left as it is, the game will not show every colour "
+                      "as drawn and the terrain will look different in play.")
                 print("  Fitting them to one palette shifts colours by "
                       "statistics, and shifts them differently as the art "
                       "changes.")

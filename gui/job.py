@@ -31,23 +31,42 @@ class _Tee:
     The tool reports by printing: notes to stderr, findings to stdout. Rather
     than change that for the GUI's benefit, the child's streams are pointed
     here and the lines arrive as events like everything else.
+
+    The most recent few lines are kept as well. A question's prompt is short
+    on purpose -- "Repalette it now?" -- and what it is really asking is in
+    the sentences printed just before it, which is the only place the colour
+    count and what declining costs are ever said. A dialog that showed the
+    prompt alone would be asking the author to decide on nothing.
     """
 
-    def __init__(self, events, kind):
+    #: Three, because that is the longest run the tool prints before a
+    #: question -- the palette one, which says the count, what leaving it
+    #: costs, and what fitting it costs. More reaches back into whatever was
+    #: being reported before and reads as part of the question.
+    KEEP = 3
+
+    def __init__(self, events, kind, recent):
         self._events = events
         self._kind = kind
+        self._recent = recent
         self._buf = ''
+
+    def _line(self, text):
+        self._events.put((self._kind, text))
+        if text.strip():
+            self._recent.append(text.strip())
+            del self._recent[:-self.KEEP]
 
     def write(self, text):
         self._buf += text
         while '\n' in self._buf:
             line, _, self._buf = self._buf.partition('\n')
-            self._events.put((self._kind, line))
+            self._line(line)
         return len(text)
 
     def flush(self):
         if self._buf:
-            self._events.put((self._kind, self._buf))
+            self._line(self._buf)
             self._buf = ''
 
     def isatty(self):
@@ -101,8 +120,9 @@ def run(folder, out_dir, option_fields, answers, events, replies):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import spritetool as st
 
-    sys.stdout = _Tee(events, 'out')
-    sys.stderr = _Tee(events, 'err')
+    recent = []
+    sys.stdout = _Tee(events, 'out', recent)
+    sys.stderr = _Tee(events, 'err', recent)
 
     def ask(question):
         # Anything already settled is not asked again. The window decides some
@@ -115,13 +135,19 @@ def run(folder, out_dir, option_fields, answers, events, replies):
             events.put(('out', f'{question.prompt} '
                                f'[{"y" if given else "n"}, settled already]'))
             return given
+        sys.stdout.flush()
         events.put(('question', {
             'key': question.key,
             'prompt': question.prompt,
             'default': question.default,
             'destructive': question.destructive,
             'subjects': list(question.subjects),
+            'context': [ln for ln in recent if ln != question.prompt],
         }))
+        # Cleared once it has been used, so the next question is described by
+        # what was printed for it rather than by what was left over from this
+        # one. A question with nothing printed before it shows nothing.
+        recent.clear()
         reply = replies.get()
         if reply == ANSWER_CANCEL:
             raise Cancelled()

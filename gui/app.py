@@ -130,6 +130,49 @@ class DropZone(QFrame):
         self.style().polish(self)
 
 
+class _Row(QTreeWidgetItem):
+    """A file row that sorts by the number behind a column, not its text.
+
+    Without this "1,021 bytes" sorts before "83.8 KB" and a colour count of
+    100 before one of 9, which makes the sortable header worse than none.
+    """
+
+    def __lt__(self, other):
+        col = self.treeWidget().sortColumn() if self.treeWidget() else 0
+        mine, theirs = self.data(col, Qt.UserRole), other.data(col, Qt.UserRole)
+        if mine is None or theirs is None:
+            return self.text(col).lower() < other.text(col).lower()
+        return mine < theirs
+
+
+def _picture_colours(path):
+    """The distinct drawn colours in a picture, or None if it is not one.
+
+    The set rather than its size, because the caller wants both: how many
+    this picture draws, and how many the folder draws between them. Those are
+    different numbers -- the budget counts a colour once however many pictures
+    use it -- and reading every file twice to get them would double the wait.
+
+    Counted the way the terrain's budget counts: unique RGB among the pixels
+    actually drawn, index 0 being the transparent one, so a PNG and an indexed
+    BMP give comparable numbers.
+    """
+    low = path.lower()
+    try:
+        with open(path, 'rb') as fh:
+            blob = fh.read()
+        if low.endswith('.png'):
+            return set(st.png_colour_counts(blob))
+        if low.endswith('.bmp'):
+            _w, _h, pixels, palette = st.read_bmp(blob)
+            return {tuple(palette[v * 3:v * 3 + 3])
+                    for v in set(pixels) - {0}
+                    if (v + 1) * 3 <= len(palette)}
+    except Exception:
+        return None
+    return None
+
+
 class ObjectTable(QTableWidget):
     """The six settings the guide gives every object, one row each.
 
@@ -293,21 +336,35 @@ class Window(QMainWindow):
         out_btn = QPushButton('Output...')
         out_btn.clicked.connect(self._choose_out)
 
+        # Not shown. How many processes to pack with is a real setting, but it
+        # is the tool's business rather than the author's: nobody drawing a
+        # terrain has an opinion about it, and a control saying "auto" beside
+        # the folder they just dropped only invites the question. Kept as a
+        # value so the pack still has one, and so somewhere to put it can be
+        # found later without unpicking anything.
         self._jobs = QSpinBox()
         self._jobs.setRange(0, 64)
-        self._jobs.setSpecialValueText('auto')
-        self._jobs.setToolTip('Processes to pack with. auto uses every core; '
-                              '1 packs in a single process.')
+        self._jobs.setValue(0)              # auto
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setVisible(False)
 
         self._files = QTreeWidget()
-        self._files.setHeaderLabels(['File', 'Size'])
+        self._files.setHeaderLabels(['File', 'Size', 'Colours'])
         self._files.setRootIsDecorated(False)
         self._files.setAlternatingRowColors(True)
-        self._files.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._files.setSortingEnabled(True)
+        self._files.sortByColumn(0, Qt.AscendingOrder)
+        head = self._files.header()
+        head.setSectionResizeMode(0, QHeaderView.Stretch)
+        head.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        head.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        for col in (1, 2):
+            self._files.headerItem().setTextAlignment(col, Qt.AlignRight)
+        #: Bumped on every load, so a colour count still running for the last
+        #: folder knows to stop rather than write into the new one's rows.
+        self._load_token = 0
 
         self._objects = ObjectTable()
         save_objects = QPushButton(f'Save {st.SETTINGS_NAME}')
@@ -351,8 +408,6 @@ class Window(QMainWindow):
         lbox.setSpacing(12)
         lbox.addWidget(self._drop)
         row = QHBoxLayout()
-        row.addWidget(QLabel('Processes'))
-        row.addWidget(self._jobs)
         row.addStretch(1)
         row.addWidget(out_btn)
         lbox.addLayout(row)
@@ -608,18 +663,64 @@ class Window(QMainWindow):
         except OSError as exc:
             self._say('err', str(exc))
             return
+        self._load_token += 1
+        token = self._load_token
+        self._files.setSortingEnabled(False)     # fill first, then order
+        rows = []
         for name in names:
             path = os.path.join(folder, name)
             if not os.path.isfile(path) or _hidden(name):
                 continue
-            item = QTreeWidgetItem([name, _human(os.path.getsize(path))])
+            size = os.path.getsize(path)
+            item = _Row([name, _human(size), ''])
+            item.setData(1, Qt.UserRole, size)
+            item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            item.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
             self._files.addTopLevelItem(item)
+            if name.lower().endswith(('.png', '.bmp')):
+                rows.append((item, path))
+        self._files.setSortingEnabled(True)
 
         count = self._objects.load(folder)
         self._tabs.setTabText(1, f'Objects ({count})' if count else 'Objects')
         for problem in self._objects.problems:
             self._say('err', f'  note: {st.SETTINGS_NAME}: {problem}')
         self._show_palette(os.path.join(folder, st.PALETTE_NAME))
+        self._count_colours(rows, token)
+
+    def _count_colours(self, rows, token):
+        """Fill the Colours column, letting the window keep up.
+
+        Counting is quick for a folder of objects and not quick for one with
+        parallax sheets in it -- a real terrain took nearly three seconds --
+        and doing it before the list appears would freeze the drop. So the
+        names and sizes go up first and the counts arrive after, a few files
+        at a time.
+
+        `token` is what stops a count begun for one folder writing into the
+        next: dropping a second folder bumps it, and this notices and stops.
+        """
+        shared = set()
+        for i, (item, path) in enumerate(rows):
+            if token != self._load_token:
+                return
+            found = _picture_colours(path)
+            if found is not None:
+                item.setText(2, f'{len(found):,}')
+                item.setData(2, Qt.UserRole, len(found))
+                shared |= found
+            if i % 8 == 7:
+                QApplication.processEvents()
+
+        # The folder's own total is not the sum of the column: the budget
+        # counts a colour once however many pictures draw it. Worth showing,
+        # since a column adding to well over 112 otherwise looks alarming --
+        # and it is the number the repalette question turns on.
+        if not rows:
+            return
+        over = (f' -- over the {st.MAX_SHARED_COLOURS}'
+                if len(shared) > st.MAX_SHARED_COLOURS else '')
+        self._tabs.setTabText(0, f'Folder ({len(shared)} colours{over})')
 
     def _show_palette(self, path):
         if os.path.exists(path):
@@ -693,8 +794,13 @@ class Window(QMainWindow):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning if q['destructive']
                     else QMessageBox.Question)
-        box.setWindowTitle('spritetool asks')
+        box.setWindowTitle('spritetool')
         box.setText(q['prompt'])
+        # What the tool printed on the way to asking. For the palette question
+        # that is the colour count, how far over the budget it is, and what
+        # leaving it costs -- none of which is in the prompt itself.
+        if q.get('context'):
+            box.setInformativeText('\n'.join(q['context']))
         if q['subjects']:
             shown = '\n'.join(q['subjects'][:12])
             if len(q['subjects']) > 12:
