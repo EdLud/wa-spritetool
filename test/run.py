@@ -5,7 +5,9 @@
     python3 test/run.py --no-numpy      # the pure-Python paths
     python3 test/run.py decode          # just one group
 
-Seven groups:
+    python3 test/run.py --all           # including the slow ones
+
+Groups:
 
   decode    the three Water.dir fixtures, decompressed and diffed byte for byte
   manifest  Coral Reef re-described and diffed against the committed manifest
@@ -15,6 +17,9 @@ Seven groups:
   colours   numpy and pure-Python agreeing on what they count
   gui       the window builds and its job process imports no Qt (skipped
             without PySide6, which the tool does not depend on)
+  nested    the pool-inside-a-pool agreeing with no pool at all. NOT run by
+            default: it needs a megabyte of sprite to exercise and takes
+            longer than everything else together. Name it, or pass --all.
 
 `pack` is the one that did not exist before. The decode fixtures cover reading
 an archive; nothing covered building one, so every packing change was checked by
@@ -265,29 +270,80 @@ def check_jobs(no_numpy=False):
     would look exactly like one that worked, and the difference would only
     show up as a terrain that behaved oddly on someone else's machine.
 
-    The wide fixture is used because it has more entries than the threshold
-    for spreading them over processes, so the entry pool actually runs.
+    This one covers the pool over entries, and is deliberately cheap: the flat
+    fixture borrowing only the pieces a terrain cannot go without, which is 16
+    entries -- past the threshold for spreading them over processes -- and no
+    sprite big enough to be worth a second pool inside one. Under a second for
+    all four settings.
+
+    What it therefore does NOT cover is the nested pool, which needs a sprite
+    of a megabyte or more and costs about a hundred seconds to exercise. That
+    is `nested`, which is not in the default run. See its docstring.
     """
+    return _jobs_agree('every --jobs agrees', REQUIRED_ONLY,
+                       ('auto', []), ('--jobs=1', ['--jobs=1']),
+                       ('--jobs=2', ['--jobs=2']),
+                       ('--no-nested-jobs', ['--no-nested-jobs']),
+                       no_numpy=no_numpy)
+
+
+def check_nested(no_numpy=False):
+    """The pool inside a pool builds the same archive as no pool at all.
+
+    Left out of the default run because it is the slowest thing here by a wide
+    margin -- around 100 seconds against the rest of the suite's 60 -- and it
+    cannot be made cheap: the inner pool only starts for a sprite of a
+    megabyte or more, so exercising it means compressing one.
+
+    Run it with `python3 test/run.py nested`, or `--all`, and in CI. The risk
+    of it not running on every change is real but small: the pools produce the
+    same bytes or they do not, and nothing in the packer varies by input in a
+    way that would break only the nested path.
+    """
+    return _jobs_agree('nested and serial agree', ['--defaults'],
+                       ('auto', []), ('--jobs=1', ['--jobs=1']),
+                       ('--no-nested-jobs', ['--no-nested-jobs']),
+                       golden=True, no_numpy=no_numpy)
+
+
+#: Borrow what a terrain cannot load without, and none of the parallax layers.
+#: The layers are the megabyte-scale sprites, and leaving them out is the
+#: difference between a second and a minute and a half.
+REQUIRED_ONLY = ['--no-defaults'] + [
+    f'--yes=defaults.{piece}'
+    for piece in ('text', 'gradient', 'soil', 'grass', 'bridge', 'icon')]
+
+
+def _jobs_agree(label, flags, *settings, golden=False, no_numpy=False):
+    """Pack the flat fixture under each setting; every archive must match."""
+    want = None
+    if golden:
+        path = os.path.join(HERE, 'pack', 'flat', 'expected.txt')
+        if os.path.exists(path):
+            for line in open(path):
+                if line.strip() and not line.startswith('#'):
+                    h, n = line.split(None, 1)
+                    if n.strip() == 'Level.dir':
+                        want = h
+
     hashes = {}
-    for label, flags in (('auto', []),
-                         ('--jobs=1', ['--jobs=1']),
-                         ('--jobs=2', ['--jobs=2']),
-                         ('--no-nested-jobs', ['--no-nested-jobs'])):
-        out, tmp, rc, log = _pack_fixture(
-            'wide', ['--defaults', '--repalette'] + flags, no_numpy)
+    for name, extra in settings:
+        out, tmp, rc, log = _pack_fixture('flat', flags + extra, no_numpy)
         try:
             if rc:
-                return say(False, f'pack {label}', _tail(log))
-            hashes[label] = md5(os.path.join(out, 'Level.dir'))
+                return say(False, f'pack {name}', _tail(log))
+            hashes[name] = md5(os.path.join(out, 'Level.dir'))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    agreed = len(set(hashes.values())) == 1
-    if not agreed:
+    if len(set(hashes.values())) != 1:
         odd = ', '.join(f'{k}={v[:8]}' for k, v in sorted(hashes.items()))
-        return say(False, 'every --jobs agrees', odd)
-    return say(True, 'every --jobs agrees',
-               f'{len(hashes)} settings, {list(hashes.values())[0][:8]}')
+        return say(False, label, odd)
+    got = next(iter(hashes.values()))
+    if want and got != want:
+        return say(False, label,
+                   f'all agree on {got[:8]}, but the golden is {want[:8]}')
+    return say(True, label, f'{len(hashes)} settings, {got[:8]}')
 
 
 def check_gui(no_numpy=False):
@@ -453,25 +509,41 @@ def check_colours(no_numpy=False):
 
 
 GROUPS = {'decode': check_decode, 'manifest': check_manifest,
-          'pack': check_pack, 'jobs': check_jobs, 'padding': check_padding,
-          'colours': check_colours, 'gui': check_gui}
+          'pack': check_pack, 'jobs': check_jobs, 'nested': check_nested,
+          'padding': check_padding, 'colours': check_colours,
+          'gui': check_gui}
+
+#: Left out unless named or --all is given. Slow enough to change how often
+#: the suite gets run, which is its own kind of risk.
+SLOW = ('nested',)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('groups', nargs='*', choices=list(GROUPS) + [],
-                    help='which checks to run (default: all)')
+                    help=f'which checks to run (default: all but '
+                         f'{", ".join(SLOW)})')
     ap.add_argument('--no-numpy', action='store_true',
                     help='block the numpy import and use the slow paths')
+    ap.add_argument('--all', action='store_true',
+                    help=f'include the slow ones ({", ".join(SLOW)})')
     a = ap.parse_args()
 
-    wanted = a.groups or list(GROUPS)
+    if a.groups:
+        wanted = a.groups          # named outright, however slow
+    elif a.all:
+        wanted = list(GROUPS)
+    else:
+        wanted = [g for g in GROUPS if g not in SLOW]
     print(f'spritetool fixtures{" (no numpy)" if a.no_numpy else ""}')
     good = True
     for name in wanted:
         print(f'{name}:')
         good = GROUPS[name](a.no_numpy) and good
+    skipped = [g for g in SLOW if g not in wanted]
+    if skipped:
+        print(f'({", ".join(skipped)} not run; --all includes them)')
     print('all good' if good else 'SOMETHING MOVED')
     return 0 if good else 1
 

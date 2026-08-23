@@ -7,6 +7,7 @@ command line does not -- chiefly that a question becomes a dialog and that
 the folder's own files are worth showing before anything is built.
 """
 
+import contextlib
 import os
 import sys
 
@@ -468,10 +469,109 @@ class Window(QMainWindow):
         box.setDefaultButton(yes)
         box.exec()
 
-        took = box.clickedButton() is yes
-        self._answers['defaults.'] = took
-        self._say('out', f'{"borrowing" if took else "not borrowing"} '
-                         f'defaults for: {pretty}')
+        if box.clickedButton() is not yes:
+            # Remembered so the pack does not ask again piece by piece. The
+            # folder stays unmarked, so the offer stands next time it is
+            # dropped -- nothing was set up, and saying so once is enough.
+            self._answers['defaults.'] = False
+            self._say('out', f'not borrowing defaults for: {pretty}')
+            return
+
+        # The required pieces are settled by the box above. The optional
+        # layers are not: a backdrop and a foreground change what the terrain
+        # looks like more than anything else lent here, so each is its own
+        # question rather than something that arrives with the rest.
+        answers = {f'defaults.{p.split(".")[0]}': True
+                   for p in st.REQUIRED_ASSETS}
+        self._run_setup(folder, answers)
+
+    def _run_setup(self, folder, answers):
+        """Copy the shipped art in now, asking about the optional pieces.
+
+        In this process rather than a spawned one: it is a handful of file
+        copies with no compression in it, and the questions belong to the
+        window anyway.
+        """
+        with self._capturing() as recent:
+            try:
+                borrowed, refused = st.setup_terrain(
+                    folder, self._dialog_asker(answers, recent))
+            except Exception as exc:
+                self._say('err', f'could not set the folder up: {exc}')
+                return
+        if refused:
+            QMessageBox.warning(self, 'Not set up', refused)
+            self._say('err', refused)
+            return
+        self._say('out', f'set up {os.path.basename(folder.rstrip(os.sep))}: '
+                         f'{len(borrowed)} piece(s) copied in')
+        self._load_folder(folder)
+        self.statusBar().showMessage(
+            f'{len(borrowed)} piece(s) copied in -- edit them, then pack')
+
+    @contextlib.contextmanager
+    def _capturing(self):
+        """Send the tool's prints to the log, keeping the most recent line.
+
+        setup_terrain describes each piece on stdout just before asking about
+        it -- "No back2: an animated layer behind the map." -- which is the
+        only place that sentence exists. Keeping the last line is how the
+        dialog can show it rather than the bare question.
+        """
+        recent = ['']
+
+        class _Sink:
+            def __init__(self, say):
+                self._say = say
+                self._buf = ''
+
+            def write(self, text):
+                self._buf += text
+                while '\n' in self._buf:
+                    line, _, self._buf = self._buf.partition('\n')
+                    if line.strip():
+                        recent[0] = line.strip()
+                        self._say(line)
+                return len(text)
+
+            def flush(self):
+                if self._buf.strip():
+                    recent[0] = self._buf.strip()
+                    self._say(self._buf)
+                self._buf = ''
+
+        out = _Sink(lambda line: self._say('out', line))
+        err = _Sink(lambda line: self._say('err', line))
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = out, err
+        try:
+            yield recent
+        finally:
+            out.flush()
+            err.flush()
+            sys.stdout, sys.stderr = old_out, old_err
+
+    def _dialog_asker(self, answers, recent):
+        """An Asker that settles what it can and puts the rest in a dialog."""
+        def ask_one(question):
+            given = st._settled(answers, question.key)
+            if given is not None:
+                return given
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning if question.destructive
+                        else QMessageBox.Question)
+            box.setWindowTitle('spritetool')
+            box.setText(question.prompt)
+            if recent[0] and recent[0] != question.prompt:
+                box.setInformativeText(recent[0])
+            if question.subjects:
+                box.setDetailedText('\n'.join(question.subjects[:20]))
+            yes = box.addButton('Yes', QMessageBox.YesRole)
+            no = box.addButton('No', QMessageBox.NoRole)
+            box.setDefaultButton(yes if question.default else no)
+            box.exec()
+            return box.clickedButton() is yes
+        return ask_one
 
     @staticmethod
     def _holds(folder, piece):

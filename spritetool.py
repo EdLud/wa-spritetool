@@ -4236,6 +4236,32 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
     return args[0], (args[1] if len(args) > 1 else None), options
 
 
+def setup_terrain(folder: str, ask: Asker) -> Tuple[List[str], str]:
+    """Put the shipped art into a folder now, rather than as a pack begins.
+
+    Packing does this on a folder's first run, which suits a command line: the
+    questions and the build are one sitting. It suits a window badly, where
+    the order is set the folder up, draw over what was lent, then pack -- and
+    art that only appears after the first pack cannot be drawn over before it.
+
+    Returns (what was borrowed, a reason to stop or ''). On a refusal nothing
+    is written and the folder is left unmarked, so the offer stands next time;
+    there is no half-prepared state to explain.
+    """
+    names, _objects, _notes = scan_terrain(folder)
+    names, borrowed, refused = _fill_from_defaults(names, folder, ask, True)
+    if refused:
+        return [], refused
+    # Marks the folder as asked-about, which is what stops the offer coming
+    # back. Written even when nothing was taken: the point is that the
+    # questions were put once, not that they were answered yes.
+    write_settings(folder, {
+        'created': _today(),
+        'borrowed': ','.join(sorted(borrowed)) or 'nothing',
+    })
+    return sorted(borrowed), ''
+
+
 def pack_terrain(folder: str, out_dir: Optional[str] = None,
                  options: Optional[Options] = None,
                  ask: Optional[Asker] = None) -> PackResult:
