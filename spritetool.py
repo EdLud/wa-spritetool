@@ -1402,6 +1402,42 @@ def _map_to_palette(counts: Dict[Tuple[int, int, int], int],
     return index_of, error_sum
 
 
+def _reserve_index_0(pixels: bytes, palette: bytes):
+    """Make index 0 the transparent slot, re-indexing if it is drawn.
+
+    The archive gives index 0 no colour: whatever sits there, the game draws
+    nothing. An indexed source whose index 0 is a real colour the author
+    painted with therefore loses those pixels, silently -- and which of a PNG
+    and a BMP that can happen to is an accident of which reader ran, since
+    the PNG path re-indexes and the BMP path did not.
+
+    So both are treated the same way now, by what the picture holds rather
+    than by its extension. Only a source that actually draws with index 0 is
+    touched: everything is shifted up one and the freed slot blacked out.
+    Across 6294 indexed BMPs to hand, 4 needed it.
+
+    Returns (pixels, palette, the displaced colour or None).
+    """
+    if not pixels or 0 not in pixels:
+        return pixels, palette, None
+    colour = tuple(palette[0:3])
+    if colour == (0, 0, 0):
+        # Already the convention: index 0 is black and means transparent.
+        return pixels, palette, None
+    # Room to shift is about the indices in use, not the palette's length --
+    # read_bmp hands back all 256 entries whether or not the picture draws
+    # with them. A source already using index 255 has nowhere to go.
+    if max(pixels) >= 255:
+        return pixels, palette, None
+    if np is not None:
+        shifted = (np.frombuffer(pixels, dtype=np.uint8).astype(np.uint16)
+                   + 1)
+        pixels = np.clip(shifted, 0, 255).astype(np.uint8).tobytes()
+    else:
+        pixels = bytes(min(255, v + 1) for v in pixels)
+    return pixels, b'\x00\x00\x00' + palette[:255 * 3], colour
+
+
 def read_png(data: bytes, max_colours: int = MAX_DRAWN_COLOURS,
              alpha_threshold: int = PNG_ALPHA_THRESHOLD,
              palette: Optional[List[Tuple[int, int, int]]] = None
@@ -2658,6 +2694,11 @@ def _write_terrain_folder(source_dir: str, out_dir: str,
                 said.append(f'{icon_src}: {note}')
         else:
             w, h, pixels, pal = read_bmp(blob)
+            pixels, pal, shifted = _reserve_index_0(pixels, pal)
+            if shifted:
+                said.append(f'{icon_src}: index 0 held a drawn colour '
+                            f'{shifted}, which the game reads as '
+                            f'transparent; re-indexed to keep it')
         if (w, h) != (ICON_DIM, ICON_DIM):
             said.append(f'{icon_src} is {w}x{h}; an icon must be '
                         f'{ICON_DIM}x{ICON_DIM}, so none was written')
@@ -3412,6 +3453,12 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
             print(f'  note: {name}: {note}', file=sys.stderr)
     else:
         width, height, pixels, source_palette = read_bmp(blob)
+        pixels, source_palette, shifted = _reserve_index_0(
+            pixels, source_palette)
+        if shifted:
+            print(f'  note: {name}: index 0 held a drawn colour '
+                  f'{shifted}, which the game reads as transparent; the '
+                  f'picture was re-indexed to keep it', file=sys.stderr)
         if force_palette and shared_palette:
             # An indexed source is normally packed as authored, but a palette
             # handed over with --read-palette is meant to be the whole of the

@@ -224,6 +224,13 @@ A terrain already inside the budget converts losslessly. Where both a `.bmp`
 and a `.png` exist the `.bmp` wins, being already indexed and so authored
 exactly.
 
+Index 0 is the transparent slot: whatever colour sits there, the game draws
+nothing. An indexed source that paints with index 0 is re-indexed rather than
+losing those pixels -- everything shifts up one and the freed slot is blacked
+out, with a note saying which colour was displaced. This goes by what the
+picture holds, not by its extension, so the same art packs the same way saved
+either way.
+
 `--write-palette` puts a `palette.png` in the build folder, the terrain's
 colours as a grid of swatches, and says how many of the 112 are spent. 
 
