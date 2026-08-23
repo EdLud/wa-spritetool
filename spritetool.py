@@ -8,6 +8,7 @@ Knowledge Base; the .spr sprite format has no public specification and was
 reverse engineered for this tool -- see SPR_FORMAT.md.
 """
 
+import dataclasses
 import struct
 import sys
 import os
@@ -3852,6 +3853,92 @@ def _expand_folder(argv):
     return runs
 
 
+class SpritetoolError(Exception):
+    """Something the caller has to fix before the tool can go on.
+
+    Carries the sentence the CLI would have printed, so `Error: {exc}` reads
+    the same as it always did, plus any lines that followed it.
+    """
+
+    def __init__(self, message: str, *, hints: Sequence[str] = ()) -> None:
+        super().__init__(message)
+        self.hints = list(hints)
+
+
+@dataclasses.dataclass
+class Options:
+    """What the flags on a pack command amount to.
+
+    Defaults are what the tool does when told nothing, so an caller that
+    wants the ordinary behaviour can pass Options() and read the field names
+    instead of remembering which flags are negative.
+    """
+
+    compress_spr: bool = True
+    compress_img: bool = True
+    recreate: bool = True
+    opaque: bool = False
+    force: bool = False
+    output_inf: bool = True
+    write_palette: bool = False
+    read_palette: bool = False
+    no_palette: bool = False
+    repalette: bool = False
+    offer_defaults: bool = False
+    # None means ask; True and False answer ahead of time, for a script.
+    assume_defaults: Optional[bool] = None
+
+
+PACK_FLAGS = {
+    '--no-compress-spr': ('compress_spr', False),
+    '--no-compress-img': ('compress_img', False),
+    '--no-recreate': ('recreate', False),
+    '--opaque-img': ('opaque', True),
+    '--force': ('force', True),
+    '--no-output-inf': ('output_inf', False),
+    '--write-palette': ('write_palette', True),
+    '--read-palette': ('read_palette', True),
+    '--no-palette': ('no_palette', True),
+    '--repalette': ('repalette', True),
+    '--offer-defaults': ('offer_defaults', True),
+    '--defaults': ('assume_defaults', True),
+    '--no-defaults': ('assume_defaults', False),
+}
+
+
+def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
+    """Read a pack command line into (target, output dir, options).
+
+    Deliberately not argparse: the hand-rolled slicing below accepts things
+    argparse would reject or read differently -- a path beginning with a dash,
+    no `--` separator -- and changing that is a change to the tool, not to how
+    it is written. Raises SpritetoolError on anything it cannot make sense of.
+    """
+    args = [a for a in argv[2:] if not a.startswith('-')]
+    opts = [a for a in argv[2:] if a.startswith('-')]
+
+    unknown = [o for o in opts if o not in PACK_FLAGS]
+    if unknown:
+        raise SpritetoolError(f"unknown option(s): {', '.join(unknown)}")
+
+    options = Options()
+    for flag in opts:
+        field, value = PACK_FLAGS[flag]
+        setattr(options, field, value)
+
+    if options.no_palette and options.read_palette:
+        raise SpritetoolError(
+            "--no-palette and --read-palette ask for opposite things. One "
+            "leaves the colours alone; the other fits every picture to a "
+            "palette you supply.")
+    if not args:
+        raise SpritetoolError(
+            "pack requires a folder or a <name>.dir.txt listing")
+    if not os.path.exists(args[0]):
+        raise SpritetoolError(f"File not found: {args[0]}")
+    return args[0], (args[1] if len(args) > 1 else None), options
+
+
 def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
     """Build a .dir from a folder, or a terrain folder from one.
 
@@ -3864,57 +3951,22 @@ def _pack_impl(argv: Sequence[str], terrain: bool) -> int:
     reach it; the shape it should have is a separate question from where
     it lives.
     """
-    args = [a for a in argv[2:] if not a.startswith('-')]
-    opts = [a for a in argv[2:] if a.startswith('-')]
-    known = {'--no-compress-spr', '--no-compress-img',
-             '--no-recreate', '--opaque-img', '--force',
-             '--defaults', '--no-defaults', '--no-output-inf',
-             '--write-palette', '--read-palette', '--no-palette',
-             '--repalette',
-             '--offer-defaults'}
-    unknown = [o for o in opts if o not in known]
-    if unknown:
-        print(f"Error: unknown option(s): {', '.join(unknown)}")
-        return 1
-
-    compress_spr = '--no-compress-spr' not in opts
-    compress_img = '--no-compress-img' not in opts
-    recreate = '--no-recreate' not in opts
-    opaque = '--opaque-img' in opts
-    force = '--force' in opts
-    # On by default: an object with no parameters is given the guide's,
-    # and writing them out is what makes that visible rather than
-    # implied. Anything already there is left alone.
-    output_inf = '--no-output-inf' not in opts
-    write_palette = '--write-palette' in opts
-    read_palette = '--read-palette' in opts
-    no_palette = '--no-palette' in opts
-    # Answer the repalette question ahead of time, for a script.
-    repalette = '--repalette' in opts
-    # Ask about the defaults again on a folder that has already been
-    # packed. The settings file is what normally silences them, and it is
-    # meant to accumulate real settings, so it should not have to be
-    # deleted to get one question re-asked.
-    offer_defaults = '--offer-defaults' in opts
-    if no_palette and read_palette:
-        print("Error: --no-palette and --read-palette ask for opposite "
-              "things. One leaves the colours alone; the other fits every "
-              "picture to a palette you supply.")
-        return 1
-    # None means ask; the flags answer ahead of time, for a script.
-    assume_defaults: Optional[bool] = None
-    if '--defaults' in opts:
-        assume_defaults = True
-    if '--no-defaults' in opts:
-        assume_defaults = False
-
-    if not args:
-        print("Error: pack requires a folder or a <name>.dir.txt listing")
-        return 1
-    target = args[0]
-    if not os.path.exists(target):
-        print(f"Error: File not found: {target}")
-        return 1
+    target, out_arg, options = parse_pack_args(argv)
+    # Unpacked into locals so the body below reads as it did. The names, and
+    # what each one means, are Options' business now.
+    compress_spr = options.compress_spr
+    compress_img = options.compress_img
+    recreate = options.recreate
+    opaque = options.opaque
+    force = options.force
+    output_inf = options.output_inf
+    write_palette = options.write_palette
+    read_palette = options.read_palette
+    no_palette = options.no_palette
+    repalette = options.repalette
+    offer_defaults = options.offer_defaults
+    assume_defaults = options.assume_defaults
+    args = [target] + ([out_arg] if out_arg else [])
 
     # Entries the folder does not hold a file for, built here instead.
     synthetic: Dict[str, bytes] = {}
@@ -4630,7 +4682,13 @@ def main():
         return 0
 
     elif command in ("pack", "pack-terrain"):
-        return _pack_impl(sys.argv, command == "pack-terrain")
+        try:
+            return _pack_impl(sys.argv, command == "pack-terrain")
+        except SpritetoolError as exc:
+            print(f"Error: {exc}")
+            for hint in exc.hints:
+                print(f"  {hint}")
+            return 1
 
     elif command == "land":
         if len(sys.argv) < 3:
