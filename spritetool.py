@@ -1759,14 +1759,14 @@ _PARALLEL_MIN_ENTRIES = 12
 
 
 def _pack_entry_safe(plan):
-    """Pack one entry in another process, capturing what it would print.
+    """Pack one entry in another process, handing back what it had to say.
 
-    _pack_entry writes its notes to stderr as it goes. Left alone in a worker
-    those arrive interleaved with every other entry's, so they are caught here
-    and handed back to be printed in the order the entries are added.
+    _pack_entry appends its notes to a list rather than printing them, so this
+    only has to carry the list home. It used to redirect stderr around the call
+    and split the buffer, which worked but swapped a process-global for the
+    duration -- and only in this path, so the serial fallback printed its notes
+    somewhere else entirely.
     """
-    import io
-    import contextlib
     # This runs inside the entry pool, and _compress_all will start another
     # for a big sprite's streams -- eight workers each forking eight more.
     # That is deliberate. A terrain's time is spent in its two or three
@@ -1774,13 +1774,12 @@ def _pack_entry_safe(plan):
     # and those are one entry apiece, so entry-level work alone leaves them
     # serial and the pack waits on them. Three runs each: inner pool off
     # 25.1s, held to two workers 18.0s, left alone 15.5s.
-    buf = io.StringIO()
+    notes: List[str] = []
     try:
-        with contextlib.redirect_stderr(buf):
-            data = _pack_entry(*plan)
-        return ('ok', data, buf.getvalue().splitlines())
+        data = _pack_entry(*plan, notes=notes)
+        return ('ok', data, notes)
     except Exception as exc:                     # noqa: BLE001 -- reported
-        return ('error', str(exc), buf.getvalue().splitlines())
+        return ('error', str(exc), notes)
 
 
 def _compress_all(streams: Sequence[bytes]) -> List[bytes]:
@@ -3536,17 +3535,25 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
                 compress_img: bool, opaque: bool,
                 shared_palette: Optional[List[Tuple[int, int, int]]] = None,
                 override: Optional[str] = None,
-                force_palette: bool = True
+                force_palette: bool = True,
+                notes: Optional[List[str]] = None
                 ) -> Optional[Tuple[bytes, bool]]:
     """Produce the bytes for one archive entry.
 
     `base` is the path the listing points at, without any added extension.
     Returns (payload, was_encoded) or None when no source file exists.
 
+    Anything worth saying is appended to `notes` rather than printed. This runs
+    in a worker process, where a print goes to a stderr nobody is reading and
+    arrives interleaved with every other entry's; the caller prints them in the
+    order the entries are added instead.
+
     With `recreate` set, a sprite or image is rebuilt from its BMP whenever
     one is present, so edits to the BMP take effect. Otherwise an existing
     binary is preferred and the BMP is only a fallback.
     """
+    if notes is None:
+        notes = []
     lower = name.lower()
     is_spr = lower.endswith('.spr')
     is_img = lower.endswith('.img')
@@ -3595,9 +3602,9 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
             if os.path.exists(alt):
                 # Both spellings present and they may disagree, so say which
                 # one is being packed rather than leave it to be guessed.
-                print(f'  note: both {os.path.basename(base)} and '
-                      f'{os.path.basename(alt)} are here; packing the .inf',
-                      file=sys.stderr)
+                notes.append(f'  note: both {os.path.basename(base)} and '
+                             f'{os.path.basename(alt)} are here; packing '
+                             f'the .inf')
             # Copied through byte for byte: most shipped .inf files carry
             # trailing blank lines, and rewriting them would churn the
             # archive for nothing.
@@ -3627,15 +3634,15 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
         width, height, pixels, source_palette, png_notes = read_png(
             blob, palette=shared_palette)
         for note in png_notes:
-            print(f'  note: {name}: {note}', file=sys.stderr)
+            notes.append(f'  note: {name}: {note}')
     else:
         width, height, pixels, source_palette = read_bmp(blob)
         pixels, source_palette, shifted = _reserve_index_0(
             pixels, source_palette)
         if shifted:
-            print(f'  note: {name}: index 0 held a drawn colour '
-                  f'{shifted}, which the game reads as transparent; the '
-                  f'picture was re-indexed to keep it', file=sys.stderr)
+            notes.append(f'  note: {name}: index 0 held a drawn colour '
+                         f'{shifted}, which the game reads as transparent; '
+                         f'the picture was re-indexed to keep it')
         if force_palette and shared_palette:
             # Fitted to the terrain's palette like everything else. A .bmp
             # used to be exempt, on the reading that its indices were chosen
@@ -3669,8 +3676,9 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
                     bytes(c) for c in shared_palette)
                 shift = error / sum(counts.values())
                 if shift:
-                    print(f'  note: {name}: mean colour shift {shift:.1f} of '
-                          f'441 ({100 * shift / 441:.1f}%)', file=sys.stderr)
+                    notes.append(
+                        f'  note: {name}: mean colour shift {shift:.1f} of '
+                        f'441 ({100 * shift / 441:.1f}%)')
 
     if opaque and is_img:
         # Opaque images have no transparent index, so shift every colour up
@@ -3696,9 +3704,10 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
             width, height, remapped, grew = _pad_to_multiple_of_four(
                 width, height, remapped)
             if grew:
-                print(f'  note: {name}: grown to {width}x{height}; a '
-                      f'compressed object the game draws correctly needs both '
-                      f'sides a multiple of 4', file=sys.stderr)
+                notes.append(
+                    f'  note: {name}: grown to {width}x{height}; a compressed '
+                    f'object the game draws correctly needs both sides a '
+                    f'multiple of 4')
         return encode_image(width, height, remapped, palette,
                             compress=compress_img), True
 
@@ -4508,8 +4517,8 @@ def main():
             outcome = results.get(name)
             if outcome is None:
                 try:
-                    outcome = ('ok', _pack_entry(*_plan(name)), [])
-                except Exception as exc:
+                    outcome = _pack_entry_safe(_plan(name))
+                except Exception as exc:         # pragma: no cover -- defensive
                     outcome = ('error', str(exc), [])
             kind, value, notes_out = outcome
             for note in notes_out:
