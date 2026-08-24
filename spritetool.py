@@ -352,21 +352,43 @@ class SpriteFile:
         12  palette, 3 bytes per entry, RGB, starting at colour 1
             u32  stream count
             pad to a 4-byte boundary
-            Stream[] 12 bytes each, in one of two field orders (below)
+            Stream[] 12 bytes each, in one of three field orders (below)
             Sprite   u16 frame rate, flags, width, height, frame count
             Frame[]  u16 data_pos, stream_selector, left, up, right, down
             stream data (offsets relative to here)  q
 
-    `ncol % 4` alone selects the stream-table layout, and the sprite record
-    always begins at a file offset congruent to 2 mod 4 -- the two layouts
-    reach that offset from opposite sides:
+    Three stream-table layouts occur. All three are the same 12-byte record
+    with the decompressed length in it and one always-zero slot; they differ
+    in how a stream's position is expressed:
 
-        ncol % 4 in (0, 1)  (position, unused, decompressed length)
-                            whole records, then two bytes of padding
-        ncol % 4 in (2, 3)  (unused, decompressed length, position of the
-                            NEXT stream); stream 0 starts at 0, so the last
-                            record's position is meaningless and its final
-                            two bytes are simply not written
+        A  (position, unused, decompressed length), whole records, then two
+           bytes of padding. Occurs when ncol % 4 is 0 or 1.
+        B  (unused, decompressed length, compressed size); positions are not
+           stored, each stream following the one before. ncol % 4 is 2 or 3
+           with 1-2 streams.
+        C  (unused, decompressed length, position of the NEXT stream); stream
+           0 starts at 0, so the last record's position is meaningless and its
+           final two bytes are simply not written. ncol % 4 is 2 or 3 with 3
+           or more streams.
+
+    Only A and C are read here, because B cannot be told from C where it
+    occurs and does not need to be: with one stream there is nothing to
+    position, and with two, stream 1 begins at recs[0][2] under either
+    reading -- B calls that stream 0's compressed size and C calls it stream
+    1's position, and they are the same number when stream 0 begins at 0.
+    Above two streams the two readings diverge and only C is ever written.
+
+    The ncol % 4 correlation is not alignment, though it looks like it. The
+    pad after the stream count already aligns the table for every value of
+    ncol % 4, and both the A tail (+2) and the B/C tail (-2) then land the
+    sprite record at an offset congruent to 2 mod 4 -- so either tail would
+    work for any palette length. What the correlation records is which
+    encoder wrote the file, not a structural requirement. _parse_compressed
+    therefore tries the candidate layouts and keeps the one whose streams
+    decompress, rather than trusting ncol % 4 to have decided.
+
+    SPR_FORMAT.md has the evidence: 2005 compressed sprites, no exceptions,
+    and the always-zero slot zero in every one of 7176 stream records.
 
     A frame holds only its cropped bounding box within the sprite cell;
     `left`/`up`/`right`/`down` are measured from the top-left, and frames are
@@ -2315,6 +2337,16 @@ def picture_size(path: str) -> Optional[Tuple[int, int]]:
         w, h = struct.unpack('>II', head[16:24])
         return (w, h) if w and h else None
     if head[:2] == b'BM' and len(head) >= 26:
+        # Two header forms, as read_bmp accepts: spriteEditor writes the old
+        # 12-byte BITMAPCOREHEADER, where the dimensions are u16 and there is
+        # no top-down flag. Reading those four bytes as the newer form's i32
+        # pair gives enormous numbers -- and a negative width for a tall
+        # sheet -- which then fails every sprite in the folder for a geometry
+        # mismatch that is not there.
+        dib = struct.unpack('<I', head[14:18])[0]
+        if dib == 12:
+            w, h = struct.unpack('<HH', head[18:22])
+            return (w, h) if w and h else None
         w, h = struct.unpack('<ii', head[18:26])
         return (w, abs(h)) if w and h else None
     return None

@@ -35,8 +35,10 @@ and must stay that way.
 """
 
 import argparse
+import glob
 import hashlib
 import os
+import struct
 import shutil
 import subprocess
 import sys
@@ -1056,6 +1058,61 @@ def check_toml(no_numpy=False):
         good = good_ok and good
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # picture_size must read both BMP header forms. spriteEditor writes the
+    # old 12-byte BITMAPCOREHEADER, whose dimensions are u16 where the modern
+    # 40-byte form puts a signed i32 pair -- read the wrong way round a
+    # 640x160 sheet comes out 10486400x524289, and a tall one comes out with
+    # a negative width, so every sprite in the folder is reported as a
+    # geometry mismatch that is not there. The decode fixtures happen to hold
+    # both forms; this checks them against what actually opens the file.
+    try:
+        from PIL import Image
+    except ImportError:
+        say(True, 'picture_size reads both BMP headers', 'no Pillow, skipped')
+    else:
+        seen = {12: 0, 40: 0}
+        wrong = []
+        # The committed fixtures are all the modern form, so the old one is
+        # written here on purpose -- otherwise this passes without ever
+        # exercising the branch the bug was in. 640x160 is the shape a
+        # back.spr sheet has, and the one that came out 10486400x524289.
+        core = tempfile.mkdtemp(prefix='corebmp-')
+        core_path = os.path.join(core, 'back.spr.bmp')
+        w, h = 640, 160
+        row = (w + 3) // 4 * 4
+        with open(core_path, 'wb') as fh:
+            fh.write(b'BM')
+            fh.write(struct.pack('<IHHI', 14 + 12 + 3 * 256 + row * h,
+                                 0, 0, 14 + 12 + 3 * 256))
+            fh.write(struct.pack('<IHHHH', 12, w, h, 1, 8))
+            fh.write(bytes(3 * 256))
+            fh.write(bytes(row * h))
+        for pat in (os.path.join(core, '*.bmp'),
+                    os.path.join(HERE, 'wa', 'decompressed', 'Water', '*.bmp'),
+                    os.path.join(HERE, 'pack', 'flat', 'build', '*.png')):
+            for path in sorted(glob.glob(pat)):
+                if path.lower().endswith('.bmp'):
+                    with open(path, 'rb') as fh:
+                        dib = struct.unpack('<I', fh.read(18)[14:18])[0]
+                    seen[12 if dib == 12 else 40] = seen.get(
+                        12 if dib == 12 else 40, 0) + 1
+                with Image.open(path) as im:
+                    real = im.size
+                if spritetool.picture_size(path) != real:
+                    wrong.append((os.path.basename(path),
+                                  spritetool.picture_size(path), real))
+        shutil.rmtree(core, ignore_errors=True)
+        if wrong:
+            good = say(False, 'picture_size reads both BMP headers',
+                       f'{len(wrong)} wrong, first {wrong[0]}') and good
+        elif not seen.get(12):
+            good = say(False, 'picture_size reads both BMP headers',
+                       'no core-header file was checked') and good
+        else:
+            good = say(True, 'picture_size reads both BMP headers',
+                       f"{seen.get(12, 0)} core-header, "
+                       f"{seen.get(40, 0)} info-header") and good
 
     # An unanswered question must never block. stdin here is an open pipe that
     # nobody writes to -- a build server, or any run whose input is a pipe --
