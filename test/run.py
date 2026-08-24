@@ -703,6 +703,64 @@ def check_toml(no_numpy=False):
                        'sidecar and .inf cleared, geometry kept, repacks '
                        'identically' if same else _tail(err2)) and good
 
+        # The listing/index pair and the built pictures go under their own
+        # questions, separately from the settings. A folder stripped of all
+        # three must still pack: the entries come from the .bmp sheets, the
+        # geometry from the TOML, and index.txt is generated. gfx0 matters
+        # here -- its sprites keep their geometry in sidecars the top-level
+        # scan never sees, so a migration that missed them would delete the
+        # frame counts and quietly drop 450 entries.
+        shutil.rmtree(work)
+        shutil.copytree(fixture, work)
+        os.makedirs(os.path.join(build, 'gfx0'), exist_ok=True)
+        sheet = next(f for f in os.listdir(build) if f.endswith('.png'))
+        shutil.copyfile(os.path.join(build, sheet),
+                        os.path.join(build, 'gfx0', 'cloudm.spr.png'))
+        from PIL import Image
+        with Image.open(os.path.join(build, 'gfx0', 'cloudm.spr.png')) as im:
+            _w, _h = im.size
+        with open(os.path.join(build, 'gfx0', 'cloudm.spr.spd'), 'w') as fh:
+            fh.write(f'frames = 1\nwidth = {_w}\nheight = {_h}\n'
+                     f'framerate = 0\nflags = 0\n')
+        _names = sorted(f for f in os.listdir(build) if f.endswith('.png'))
+        with open(os.path.join(build, 'Level.dir.txt'), 'w',
+                  encoding='latin-1', newline='') as fh:
+            fh.write(''.join(f'{n[:-4]}.img\r\n' for n in _names))
+        out_e = os.path.join(tmp, 'e')
+        rc, stdout, stderr = tool(
+            ['pack-terrain', build, out_e, '--yes=setup.confirm',
+             '--yes=settings.convert_toml', '--yes=settings.clear_legacy',
+             '--yes=archive.clear_listing', '--yes=archive.clear_built',
+             '--yes=settings.convert_listing', '--defaults'], no_numpy)
+        log = stdout + stderr
+        settled = settings_toml.load(build)
+        borrowed = {'_back.spr.spd', 'back2.spr.spd', 'debris.spr.spd',
+                    'front.spr.spd'}
+        left = [f for f in os.listdir(build)
+                if (f.endswith(('.spr', '.img', '.spd', '.inf'))
+                    or f in ('index.txt', 'Level.dir.txt'))
+                and f not in borrowed]
+        sub_left = [f for f in os.listdir(os.path.join(build, 'gfx0'))
+                    if f.endswith(('.spr', '.spd'))]
+        if rc:
+            good = say(False, 'toml clear build files', _tail(log))
+        elif left or sub_left:
+            good = say(False, 'toml clear build files',
+                       f'still there: {(left + sub_left)[:3]}')
+        elif settled is None or 'gfx0\\cloudm' not in settled.sprites:
+            good = say(False, 'toml clear build files',
+                       f'gfx0 geometry not migrated: '
+                       f'{sorted(settled.sprites) if settled else None}')
+        else:
+            # It has to still build with none of what was removed.
+            out_f = os.path.join(tmp, 'f')
+            rc2, _, err2 = tool(['pack-terrain', build, out_f], no_numpy)
+            ok = not rc2 and os.path.exists(os.path.join(out_f, 'Level.dir'))
+            good = say(ok, 'toml clear build files',
+                       'listing, index and built pictures cleared, gfx0 '
+                       'geometry kept, still packs' if ok
+                       else _tail(err2)) and good
+
         # Limited mode: --no=settings.convert_toml still packs, writes no TOML.
         shutil.rmtree(work)
         shutil.copytree(fixture, work)

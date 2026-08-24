@@ -2708,30 +2708,52 @@ def _spd_geometry(folder: str) -> Dict[str, Dict[str, int]]:
     complain about in its own words.
     """
     out: Dict[str, Dict[str, int]] = {}
+
+    def gather(where: str, prefix: str) -> None:
+        try:
+            entries = os.listdir(where)
+        except OSError:
+            return
+        for name in entries:
+            if not name.lower().endswith('.spr.spd'):
+                continue
+            path = os.path.join(where, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r', encoding='latin-1') as fh:
+                    meta = read_spd(fh.read())
+            except OSError:
+                continue
+            if 'frames' not in meta:
+                continue
+            # Key on the .spr stem, matching the lookup in the packer: a
+            # terrain's own sprite is keyed by its bare stem, and one in a
+            # gfx0/gfx1 override folder by the backslash-joined name the
+            # archive stores it under.
+            stem = name[:-len('.spd')]
+            key = prefix + (stem[:-4] if stem.lower().endswith('.spr')
+                            else stem)
+            kept = {k: meta[k] for k in settings_toml.SPRITE_KEYS if k in meta}
+            if kept:
+                out[key] = kept
+
+    gather(folder, '')
+    # The override folders too. Coral Reef keeps 450 sprites in gfx0, every
+    # one of them with a sidecar and none of them named by the top-level
+    # scan, so a migration that stopped at the folder itself would leave
+    # their frame counts behind -- and those sidecars could then never be
+    # cleared away without breaking the pack.
     try:
-        entries = os.listdir(folder)
+        here = os.listdir(folder)
     except OSError:
         return out
-    for name in entries:
-        if not name.lower().endswith('.spr.spd'):
+    for sub in here:
+        if sub.lower() not in SPRITE_SUBFOLDERS:
             continue
-        path = os.path.join(folder, name)
-        if not os.path.isfile(path):
-            continue
-        try:
-            with open(path, 'r', encoding='latin-1') as fh:
-                meta = read_spd(fh.read())
-        except OSError:
-            continue
-        if 'frames' not in meta:
-            continue
-        # Key on the .spr stem, matching the lookup in the packer: a
-        # terrain's own sprite is keyed by its bare stem.
-        stem = name[:-len('.spd')]
-        key = stem[:-4] if stem.lower().endswith('.spr') else stem
-        kept = {k: meta[k] for k in settings_toml.SPRITE_KEYS if k in meta}
-        if kept:
-            out[key] = kept
+        path = os.path.join(folder, sub)
+        if os.path.isdir(path):
+            gather(path, f'{sub}\\')
     return out
 
 
@@ -2784,17 +2806,127 @@ def absorbed_legacy_files(folder: str,
         # The sidecar sits beside the sheet under the entry's own name, so
         # the `debris` the TOML keys on is `debris.spr.spd` on disk. The
         # bare `.spd` spelling is checked too, for a folder that used it.
-        low = name.lower()
+        # A gfx0/gfx1 sprite is keyed `gfx0\circl100`, and its sidecar sits
+        # in that subfolder rather than beside the terrain's own art, so it
+        # is looked for there and reported with the same relative spelling.
+        sub, _, leaf = name.replace('\\', '/').rpartition('/')
+        low = leaf.lower()
+        if sub:
+            where = os.path.join(folder, sub)
+            try:
+                here = {f.lower(): f for f in os.listdir(where)
+                        if os.path.isfile(os.path.join(where, f))}
+            except OSError:
+                continue
+        else:
+            here = present
         for cand in (f'{low}.spr.spd', f'{low}.spd'):
-            real = present.get(cand)
+            real = here.get(cand)
             if real is not None:
-                found.append(real)
+                found.append(os.path.join(sub, real) if sub else real)
                 break
     for plain in (SETTINGS_NAME, SETTINGS_FILE):
         real = present.get(plain.lower())
         if real is not None:
             found.append(real)
     return sorted(set(found))
+
+
+def archive_listing_files(folder: str) -> List[str]:
+    """The listing and index files a scanned pack has no use for.
+
+    `<name>.dir.txt` and `index.txt` both describe the archive's contents:
+    the first names every entry, the second names the objects. Packing from
+    the folder reads neither -- entries come from the scan and index.txt is
+    generated into the archive, alphabetically, from the objects found. They
+    are SpriteEditor's way of fixing an order this tool does not preserve
+    anyway, so once a folder is ours they only go stale.
+    """
+    try:
+        entries = os.listdir(folder)
+    except OSError:
+        return []
+    return sorted(f for f in entries
+                  if os.path.isfile(os.path.join(folder, f))
+                  and (f.lower().endswith('.dir.txt')
+                       or f.lower() == 'index.txt'))
+
+
+def built_picture_files(folder: str) -> List[str]:
+    """Built `.spr`/`.img` entries whose editable source is right beside them.
+
+    The tool builds these from the `.bmp`/`.png` sheets when it packs, so a
+    copy on disk is a previous build rather than source. Only ones with a
+    sheet beside them are named: a `.spr` or `.img` with nothing to rebuild
+    it from IS the source, and deleting it would lose the art.
+
+    A sprite needs its frame count as well as its pixels, so a `.spr` is only
+    named when the geometry is somewhere the packer will still find it --
+    settings.spritetool.toml, or a `.spd` sidecar. Without that, the built
+    file is the only thing standing between the sheet and a sprite collapsed
+    to one frame.
+    """
+    toml = settings_toml.load(folder)
+    known = {k.lower() for k in (toml.sprites if toml else {})}
+    found: List[str] = []
+
+    def look(where: str, rel: str) -> None:
+        try:
+            entries = os.listdir(where)
+        except OSError:
+            return
+        present = {f.lower(): f for f in entries
+                   if os.path.isfile(os.path.join(where, f))}
+        for low, real in sorted(present.items()):
+            if not (low.endswith('.spr') or low.endswith('.img')):
+                continue
+            if not any(f'{low}{ext}' in present for ext in ('.bmp', '.png')):
+                continue            # nothing to rebuild it from: it is source
+            if low.endswith('.spr'):
+                key = f'{rel}{low[:-4]}'
+                if key not in known and f'{low}.spd' not in present:
+                    continue        # no frame count anywhere but this file
+            found.append(os.path.join(rel.replace('\\', os.sep), real)
+                         if rel else real)
+
+    look(folder, '')
+    try:
+        here = os.listdir(folder)
+    except OSError:
+        here = []
+    for sub in sorted(here):
+        if sub.lower() in SPRITE_SUBFOLDERS \
+                and os.path.isdir(os.path.join(folder, sub)):
+            look(os.path.join(folder, sub), f'{sub}\\')
+    return found
+
+
+def _delete_all(folder: str, names: Sequence[str]) -> List[str]:
+    """Remove `names` from `folder`, reporting what would not go."""
+    gone: List[str] = []
+    for name in names:
+        try:
+            os.remove(os.path.join(folder, name))
+            gone.append(name)
+        except OSError as exc:
+            print(f'  note: could not delete {name}: {exc}', file=sys.stderr)
+    if gone:
+        print(f'  deleted {len(gone)} file(s)', file=sys.stderr)
+    return gone
+
+
+def _offer_delete(folder: str, ask: Asker, names: Sequence[str], key: str,
+                  says: str, prompt: str) -> List[str]:
+    """Report `names`, ask `key`, and delete them on a yes."""
+    if not names:
+        return []
+    shown = ', '.join(names[:4]) + (f' and {len(names) - 4} more'
+                                    if len(names) > 4 else '')
+    print(f'{len(names)} {says}: {shown}')
+    if not ask(Question(key, prompt, destructive=True,
+                        subjects=tuple(names))):
+        return []
+    return _delete_all(folder, names)
 
 
 def offer_to_clear_legacy(folder: str, ask: Asker,
@@ -2809,29 +2941,42 @@ def offer_to_clear_legacy(folder: str, ask: Asker,
     breaks by saying no.
     """
     stale = absorbed_legacy_files(folder, toml)
-    if not stale:
-        return []
-    shown = ', '.join(stale[:4]) + (f' and {len(stale) - 4} more'
-                                    if len(stale) > 4 else '')
-    print(f'{len(stale)} SpriteEditor-era file(s) now say nothing that '
-          f'{settings_toml.SETTINGS_TOML_NAME} does not: {shown}')
-    if not ask(Question(
-            'settings.clear_legacy',
-            f'Permanently delete these {len(stale)} file(s) from the folder? '
-            f'Their settings are in {settings_toml.SETTINGS_TOML_NAME} '
-            f'already, so nothing is lost -- but this erases the originals, '
-            f'and there is no undo.',
-            destructive=True, subjects=tuple(stale))):
-        return []
+    return _offer_delete(
+        folder, ask, stale, 'settings.clear_legacy',
+        f'SpriteEditor-era file(s) now say nothing that '
+        f'{settings_toml.SETTINGS_TOML_NAME} does not',
+        f'Permanently delete these {len(stale)} file(s) from the folder? '
+        f'Their settings are in {settings_toml.SETTINGS_TOML_NAME} already, '
+        f'so nothing is lost -- but this erases the originals, and there is '
+        f'no undo.')
+
+
+def offer_to_clear_build_files(folder: str, ask: Asker) -> List[str]:
+    """Offer the listing/index pair and the built pictures, as two questions.
+
+    Separate from the settings clear-out and from each other: they are
+    different kinds of file with different reasons to keep them. Someone may
+    want the listing gone and the built art kept, or the reverse, and one
+    prompt covering both would make that impossible to say.
+    """
     gone: List[str] = []
-    for name in stale:
-        try:
-            os.remove(os.path.join(folder, name))
-            gone.append(name)
-        except OSError as exc:
-            print(f'  note: could not delete {name}: {exc}', file=sys.stderr)
-    if gone:
-        print(f'  deleted {len(gone)} file(s)', file=sys.stderr)
+    listings = archive_listing_files(folder)
+    gone += _offer_delete(
+        folder, ask, listings, 'archive.clear_listing',
+        'file(s) describe the archive rather than feed it',
+        f'Permanently delete these {len(listings)} file(s)? Packing this '
+        f'folder reads neither -- the entries come from the scan and '
+        f'index.txt is written into the archive from the objects found, in '
+        f'alphabetical order. There is no undo.')
+
+    built = built_picture_files(folder)
+    gone += _offer_delete(
+        folder, ask, built, 'archive.clear_built',
+        'built picture(s) have their editable sheet beside them',
+        f'Permanently delete these {len(built)} built file(s)? The tool '
+        f'rebuilds each one from its .bmp/.png when it packs, so they are '
+        f'output rather than source. Only files with a sheet to rebuild them '
+        f'from are listed. There is no undo.')
     return gone
 
 
@@ -2858,6 +3003,14 @@ def _mark_settled(folder: str, borrowed: Sequence[str],
         if toml is not None:
             base.tool.update(toml.tool)
         toml = base
+    # Any sidecar geometry not already recorded. The settings conversion does
+    # this for a folder that has legacy object settings to migrate, but a
+    # folder with none still has sprites, and their frame counts would
+    # otherwise live only in the .spr.spd files -- which then could never be
+    # cleared away, since a sheet says nothing about its own frame count.
+    # Existing tables win: what is on disk was written deliberately.
+    for key, geometry in _spd_geometry(folder).items():
+        toml.sprites.setdefault(key, geometry)
     legacy = read_settings(folder)
     if 'created' not in toml.tool:
         toml.tool['created'] = (legacy or {}).get('created') or _today()
@@ -4865,6 +5018,38 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                     # the same source the next one will, rather than looking
                     # for sidecars that are no longer there.
                     toml = settings_toml.load(source_dir)
+                # The listing and the built pictures are not settings, so
+                # they are asked about separately from the conversion and
+                # from each other. Here rather than inside it: a folder with
+                # no legacy settings to migrate still has a Level.dir.txt and
+                # a shelf of built .spr/.img, and skipping the offer for it
+                # was leaving exactly the files this is meant to clear. Only
+                # on the run that sets the folder up, and only after the TOML
+                # is on disk, so a sprite's geometry is safely recorded
+                # before its sidecar can be deleted.
+                if not folder_settled(source_dir):
+                    # The sidecars' geometry has to be in the file before it
+                    # can be offered for deletion, and the settings
+                    # conversion only records it for a folder that had legacy
+                    # object settings. _mark_settled does the same later, for
+                    # the run that borrows defaults; this is the same step
+                    # brought forward to where the offer needs it.
+                    fresh = settings_toml.load(source_dir)
+                    if fresh is None:
+                        fresh = fresh_toml or settings_toml.TerrainSettings()
+                    added = False
+                    for key, geometry in _spd_geometry(source_dir).items():
+                        if key not in fresh.sprites:
+                            fresh.sprites[key] = geometry
+                            added = True
+                    if added:
+                        settings_toml.save(source_dir, fresh)
+                        toml = settings_toml.load(source_dir)
+                        # Those sidecars are settings, and now say nothing
+                        # the TOML does not. The conversion offers its own;
+                        # this covers the folder that had none to convert.
+                        offer_to_clear_legacy(source_dir, ask, toml)
+                    offer_to_clear_build_files(source_dir, ask)
                 for stem, values in obj_settings.items():
                     synthetic[f'{stem}.inf'] = format_inf(values)
                 first_run = not folder_settled(source_dir) or offer_defaults

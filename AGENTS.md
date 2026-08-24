@@ -229,7 +229,9 @@ SpriteEditor writes).
   `settings.convert_toml` (migrate legacy object settings),
   `settings.convert_listing` (pack from scan + TOML instead of a
   `.dir.txt`/`index.txt` listing), `settings.clear_legacy` (delete the
-  SpriteEditor-era files the TOML now answers for), `defaults.<piece>`, and
+  SpriteEditor-era files the TOML now answers for), `archive.clear_listing`
+  (delete `<name>.dir.txt` and `index.txt`), `archive.clear_built` (delete
+  built `.spr`/`.img` whose sheet is beside them), `defaults.<piece>`, and
   `palette.repalette`. `settings.consolidate` is superseded on the TOML path.
 - Questions never block a run that has no terminal. When stdin is not a TTY
   and nothing answered the key, the question takes its own default and says
@@ -245,6 +247,18 @@ SpriteEditor writes).
   `<name>.dir.txt` are never deleted: the first is a real archive entry and
   the second is the author's record of entry order. Art borrowed from
   `presets/` keeps its own sidecars, which are not the author's to lose.
+- Setting a folder up also offers to clear what it no longer needs, as
+  separate questions so each can be answered on its own: the settings files
+  the TOML absorbed, the `<name>.dir.txt`/`index.txt` pair (packing reads
+  neither -- entries come from the scan and `index.txt` is generated into the
+  archive alphabetically), and the built `.spr`/`.img` files. A built picture
+  is only offered when a `.bmp`/`.png` sits beside it to rebuild it from, and
+  a `.spr` only when its frame count is in the TOML or a `.spd` -- a sheet
+  says nothing about its own frame count. All default to no.
+- `_spd_geometry` reads the `.spr.spd` sidecars in the folder *and* in each
+  `gfx0`/`gfx1` override folder, keyed as the packer looks them up (`gfx0\
+  cloudm`). Coral Reef keeps 450 sprites in `gfx0`, so a migration that
+  stopped at the top level would strand their frame counts.
 - A terrain's settings live in `settings.spritetool.toml`, read and written
   through `settings_toml.py` -- a hand-rolled TOML parser/writer, no
   dependency, Python 3.8+ preserved (the stdlib's `tomllib` is 3.11+ and

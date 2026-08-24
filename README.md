@@ -324,6 +324,25 @@ TOML. `index.txt` and `Level.dir.txt` are never deleted -- the first is a
 real archive entry, the second is your own record of entry order -- and art
 borrowed from `presets/` keeps its own sidecars.
 
+Setting a folder up also offers to clear two other kinds of file it no
+longer needs, each under its own question so they can be answered
+separately:
+
+- `archive.clear_listing` -- `Level.dir.txt` and `index.txt`. Packing from
+  the folder reads neither: the entries come from the scan, and `index.txt`
+  is written into the archive from the objects found, alphabetically. They
+  are SpriteEditor's way of fixing an order this tool does not preserve.
+- `archive.clear_built` -- the built `.spr`/`.img` files. The tool rebuilds
+  each from its `.bmp`/`.png` when it packs, so they are output rather than
+  source. Only files with a sheet beside them are offered, and a `.spr` only
+  when its frame count is recorded in the TOML or a `.spd` -- a sheet says
+  nothing about its own frame count.
+
+Both default to no. Clearing all three on a real terrain took one Coral Reef
+build folder from 1478 files to 500, and it still packs the same 525 entries
+-- including the 450 `gfx0` sprite overrides, whose geometry moves into the
+TOML during the conversion.
+
 The `.inf` entries written INTO the archive are unchanged -- that is the
 game's own format.
 

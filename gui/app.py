@@ -558,6 +558,13 @@ class Window(QMainWindow):
             # Files may still be sitting there from a `no`, so the offer is
             # made once more rather than never again.
             st.offer_to_clear_legacy(folder, ask, had_toml)
+            gone = st.offer_to_clear_build_files(folder, ask)
+        else:
+            # The conversion above made the build-file offers itself, once
+            # the TOML was written.
+            gone = []
+        if gone:
+            self._say('out', f'  cleared {len(gone)} file(s) from the folder')
 
     def setup_needed(self, folder):
         """Required pieces this folder has not got, or [] if it is settled.
