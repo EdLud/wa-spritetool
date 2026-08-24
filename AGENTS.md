@@ -90,6 +90,14 @@ about ten colours the terrain does not actually share.
   per-object `.inf`, the `.spr.spd` sidecar), which are now read only to
   migrate them. It imports nothing from the repo, so both `spritetool` and
   `gui` can import it without a cycle.
+- `spritetool.command` / `spritetool.bat` — double-click launchers for the
+  window, macOS and Windows. Each probes for a Python that can import both
+  PySide6 and Pillow rather than the first interpreter it finds (a machine
+  with several usually has PySide6 in only one), preferring a `.venv` beside
+  the repo; when none can, it names the missing piece and pauses so the
+  message is readable after a double-click. `.gitattributes` pins the `.bat`
+  to CRLF (cmd.exe mis-parses bare LF) and the `.command` to LF, and the
+  `.command` is committed executable.
 - `SPR_FORMAT.md` — reverse-engineering notes for the sprite format (working
   notes, with unresolved points marked)
 - `README.md` — user documentation; the terrain-authoring workflow is

@@ -18,11 +18,37 @@ Python 3.8 or newer, and [Pillow](https://pypi.org/project/Pillow/).
 pip install pillow
 ```
 
+The window needs [PySide6](https://pypi.org/project/PySide6/) as well. The
+command line does not, and never imports it.
+
+```bash
+pip install PySide6
+```
+
 ## Install
 
 ```bash
 git clone https://github.com/EdLud/spritetool
 cd spritetool
+```
+
+## The window
+
+Double-click **`spritetool.command`** on macOS, or **`spritetool.bat`** on
+Windows. Both sit in the folder you just cloned.
+
+Each finds a Python that can actually run the window rather than the first
+one it meets -- a machine with several usually has PySide6 in only one of
+them, and a `.venv` beside the launcher is preferred over anything on PATH.
+If nothing suitable is found they say which piece is missing and give you the
+line to install it, and they hold the window open so you can read it. On
+macOS, if the double-click opens a text editor instead of running, the
+executable bit was lost in transit: `chmod +x spritetool.command`.
+
+From a terminal it is:
+
+```bash
+python3 -m gui
 ```
 
 ## Usage

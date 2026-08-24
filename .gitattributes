@@ -8,3 +8,11 @@ test/** -text -diff
 # copied into a build folder verbatim, so converting them here would hand the
 # author a file the game's own tools did not produce.
 presets/*.spd -text
+
+# The double-click launchers. cmd.exe can mis-parse a batch file with bare
+# LF endings -- goto and multi-line blocks are where it shows -- so the .bat
+# keeps CRLF wherever it is checked out. The macOS .command is run by bash
+# and must keep LF, which a CRLF checkout would break with "\r: command not
+# found".
+*.bat text eol=crlf
+*.command text eol=lf
