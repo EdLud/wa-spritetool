@@ -67,10 +67,18 @@ folder: the art as BMP, and every object's placement and every terrain
 sprite's geometry written to `settings.spritetool.toml`. The result packs
 straight back with `pack-terrain`.
 
-`decompress` no longer writes a `<name>.dir.txt` listing: it was a
-synthesized pack argument, not archive data, and `pack` rebuilds the order
-from a folder scan when none is present. `index.txt`, a real archive entry,
-is still copied through as data.
+`decompress` unpacks the archive it is given and nothing that sits beside
+it. It no longer writes a `<name>.dir.txt` listing (a synthesized pack
+argument, not archive data -- `pack` rebuilds the order from a folder scan
+when none is present), and it no longer writes the terrain icon, which is a
+loose `TEXT.img` next to `Level.dir` rather than an entry. `index.txt`, a
+real archive entry, is still copied through as data. Carrying the icon is
+`unpack-terrain`'s job: that command builds a folder meant to be packed
+again, so a terrain taken apart and put back together keeps it.
+
+This matters when measuring a terrain's palette: the icon spends none of the
+112-colour budget, and a `decompress` output that included it would count
+about ten colours the terrain does not actually share.
 
 ## Repository layout
 

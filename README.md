@@ -362,11 +362,15 @@ For each sprite this writes three files:
 | `.bmp` | the same sheet as an 8-bit indexed bitmap |
 | `.spd` | frame count, dimensions, frame rate, playback flags |
 
-A terrain's icon is not in the archive -- it sits beside it as `text.img` in
-whatever casing its author used -- so it is written out as `icon.img.bmp`,
-the name `pack-terrain` looks for. Without that a terrain taken apart and put
-back together would lose its icon and be offered a default instead. The land
-texture shares the name and is told apart by being 256x256 rather than 64x64.
+`decompress` unpacks the archive it is given and nothing that sits beside it,
+so a terrain's icon is left where it is: that icon is a loose `text.img` next
+to `Level.dir` rather than an entry, and writing it here would put a picture
+in the output that no entry accounts for -- one that would then be counted
+against the 112-colour budget by anything measuring the folder. Use
+`unpack-terrain` to take a terrain apart for editing; it carries the icon out
+as `icon.img.bmp`, the name `pack-terrain` looks for, so the terrain keeps it
+when packed again. (The land texture shares the name `text.img` and is told
+apart by being 256x256 rather than 64x64.)
 
 Each image becomes a single `<name>.img.bmp`. Anything that is not a picture --
 `.inf` object parameters, `index.txt`, fonts -- is copied through untouched.

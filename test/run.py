@@ -830,6 +830,31 @@ def check_toml(no_numpy=False):
                 good = say(rc2 == 0, 'decompress listing gone',
                            'no .dir.txt, index.txt kept, folder repacks'
                            if rc2 == 0 else _tail(err2))
+
+            # decompress unpacks the archive it was given and nothing that
+            # sits beside it. A terrain's icon is a loose TEXT.img next to
+            # Level.dir, so writing it here would put a picture in the output
+            # that no entry accounts for -- and it would be counted against
+            # the 112-colour budget by anyone measuring the folder. Carrying
+            # the icon is unpack-terrain's job, and it still does.
+            icon = os.path.join(folder, 'icon.img.bmp')
+            sibling = os.path.join(os.path.dirname(level), 'TEXT.img')
+            if not os.path.exists(sibling):
+                good = say(False, 'decompress leaves the icon alone',
+                           'fixture wrote no TEXT.img to leave alone')
+            elif os.path.exists(icon):
+                good = say(False, 'decompress leaves the icon alone',
+                           'wrote icon.img.bmp from beside the archive')
+            else:
+                un = os.path.join(tmp, 'un')
+                rc3, _, err3 = tool(['unpack-terrain', level, un], no_numpy)
+                kept = os.path.exists(os.path.join(un, 'icon.img.bmp'))
+                good = say(not rc3 and kept,
+                           'decompress leaves the icon alone',
+                           'no icon from decompress, unpack-terrain keeps it'
+                           if not rc3 and kept
+                           else (_tail(err3) if rc3
+                                 else 'unpack-terrain lost the icon')) and good
         finally:
             shutil.rmtree(packtmp, ignore_errors=True)
     finally:

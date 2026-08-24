@@ -5645,15 +5645,12 @@ def main():
             print(f"Error: {e}")
             return 1
 
-        # A terrain's icon is not in the archive: it sits beside it, spelled
-        # text.img in any casing the author fancied -- 102 of a stock install
-        # use text.img, 38 TEXT.IMG. Bring it along under the name pack-terrain
-        # looks for, or a terrain taken apart and put back together would lose
-        # the icon and be offered a default in its place.
-        icon_out = _emit_sibling_icon(dir_file, sprite_output_dir)
-        if icon_out:
-            print(f"Wrote {icon_out} from the icon beside the archive")
-
+        # No icon here. A terrain's icon is not in the archive -- it sits
+        # beside it as text.img -- and decompress unpacks the archive it was
+        # given, nothing else. Writing it would put a picture in the output
+        # that no entry accounts for, which is what unpack-terrain is for:
+        # that command builds a folder meant to be packed again, and carries
+        # the icon so a terrain taken apart and put back together keeps it.
         print(f"\nDecompressed {count} sprites to {sprite_output_dir}")
         if img_count:
             print(f"Decoded {img_count} images to {sprite_output_dir}")
