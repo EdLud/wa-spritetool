@@ -17,7 +17,13 @@ cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cp -r test/pack/flat "$work/flat"
-python3 spritetool.py pack-terrain "$work/flat/build" "$work/out" --defaults >/dev/null
+# --yes=setup.confirm because the fixture is a pristine input with no
+# settings.spritetool.toml: packing asks to set the folder up first, and
+# with no terminal to answer it the question takes its safe answer and
+# the pack stops. The answer writes only the TOML marker into the copied
+# folder, which is not an archive entry, so the golden is unaffected.
+python3 spritetool.py pack-terrain "$work/flat/build" "$work/out" \
+    --yes=setup.confirm --defaults >/dev/null
 
 golden=test/pack/flat/expected.txt
 {
