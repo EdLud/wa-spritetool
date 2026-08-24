@@ -915,6 +915,71 @@ def check_toml(no_numpy=False):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # The sprite record: a sheet says nothing about how it is cut up, so a
+    # wrong frame count is not a crash but art sliced in the wrong places.
+    # sprite_records pairs each record with its sheet and says what does not
+    # add up, for the window to show and for setup to warn about -- all of
+    # them, where the packer refuses on the first one it reaches.
+    tmp = tempfile.mkdtemp(prefix='toml-spr-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        os.makedirs(os.path.join(build, 'gfx0'), exist_ok=True)
+        sheet = sorted(f for f in os.listdir(build) if f.endswith('.png'))[0]
+        from PIL import Image
+        with Image.open(os.path.join(build, sheet)) as im:
+            _w, _h = im.size
+        # One sprite whose record fits its sheet, and one that does not.
+        for name, frames in (('good.spr.png', 1), ('bad.spr.png', 7)):
+            shutil.copyfile(os.path.join(build, sheet),
+                            os.path.join(build, name))
+        settled = settings_toml.TerrainSettings()
+        settled.sprites['good'] = {'frames': 1, 'width': _w, 'height': _h,
+                                   'framerate': 0, 'flags': 0}
+        settled.sprites['bad'] = {'frames': 7, 'width': _w, 'height': _h,
+                                  'framerate': 0, 'flags': 0}
+        # A gfx0 override carrying its record in a sidecar, as a legacy
+        # folder does -- it must be found in the subfolder, not just at top.
+        shutil.copyfile(os.path.join(build, sheet),
+                        os.path.join(build, 'gfx0', 'cloudm.spr.png'))
+        with open(os.path.join(build, 'gfx0', 'cloudm.spr.spd'), 'w') as fh:
+            fh.write(f'frames = 1\nwidth = {_w}\nheight = {_h}\n'
+                     f'framerate = 0\nflags = 0\n')
+        settings_toml.save(build, settled)
+
+        rows = {r['name']: r for r in spritetool.sprite_records(build)}
+        fits = rows.get('good')
+        bad = rows.get('bad')
+        over = rows.get('gfx0\\cloudm')
+        if fits is None or bad is None or over is None:
+            say(False, 'sprite records',
+                f'found {sorted(rows)}')
+            good_ok = False
+        elif fits['problem']:
+            say(False, 'sprite records',
+                f"a matching record was called wrong: {fits['problem']}")
+            good_ok = False
+        elif not bad['problem']:
+            say(False, 'sprite records', 'a wrong frame count went unnoticed')
+            good_ok = False
+        elif over['problem'] or over['source'] != 'cloudm.spr.spd':
+            say(False, 'sprite records',
+                f"gfx0 sidecar not read: {over['source']!r} "
+                f"{over['problem']!r}")
+            good_ok = False
+        elif fits['source'] != settings_toml.SETTINGS_TOML_NAME:
+            say(False, 'sprite records',
+                f"record should come from the TOML, got {fits['source']!r}")
+            good_ok = False
+        else:
+            good_ok = say(True, 'sprite records',
+                          f'{len(rows)} sprite(s), the wrong one named, '
+                          f'gfx0 sidecar read')
+        good = good_ok and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # An unanswered question must never block. stdin here is an open pipe that
     # nobody writes to -- a build server, or any run whose input is a pipe --
     # which never reaches EOF, so a question that waits on it waits for ever.

@@ -2295,6 +2295,144 @@ GFX_PALETTES = {'gfx0': GFX0_PALETTE, 'gfx1': GFX1_PALETTE}
 PICTURE_EXTS = ('.bmp', '.png')
 
 
+def picture_size(path: str) -> Optional[Tuple[int, int]]:
+    """A picture's (width, height) from its header alone, or None.
+
+    Only the header: a parallax sheet runs to 1024x32000 and decoding one to
+    learn its dimensions costs seconds per sprite. PNG carries them in IHDR
+    at a fixed offset; BMP in its info header, where a negative height means
+    the rows are stored top-down and the magnitude is what counts.
+
+    Never raises -- an unreadable or truncated file is None, and the caller
+    says so in its own words.
+    """
+    try:
+        with open(path, 'rb') as fh:
+            head = fh.read(34)
+    except OSError:
+        return None
+    if head[:8] == b'\x89PNG\r\n\x1a\n' and len(head) >= 24:
+        w, h = struct.unpack('>II', head[16:24])
+        return (w, h) if w and h else None
+    if head[:2] == b'BM' and len(head) >= 26:
+        w, h = struct.unpack('<ii', head[18:26])
+        return (w, abs(h)) if w and h else None
+    return None
+
+
+def sprite_geometry_problem(frames: int, cell_w: int, cell_h: int,
+                            sheet: Tuple[int, int]) -> str:
+    """Why `frames` cells of cell_w x cell_h cannot come from `sheet`, or ''.
+
+    The rule the packer enforces when it builds a sprite, in one place so the
+    window can put the same question before a pack rather than after it: the
+    cells are stacked vertically, so their heights must sum to the sheet's
+    and their width must be the sheet's. A sheet says nothing about its own
+    frame count, which is exactly why a wrong record goes unnoticed until the
+    art comes out sliced in the wrong places.
+    """
+    width, height = sheet
+    if frames < 1:
+        return f'{frames} frames; a sprite needs at least one'
+    if cell_w < 1 or cell_h < 1:
+        return f'cell {cell_w}x{cell_h}; neither side may be zero'
+    if cell_w != width or cell_h * frames != height:
+        return (f'{frames} frames of {cell_w}x{cell_h} needs a '
+                f'{cell_w}x{cell_h * frames} sheet, but the picture is '
+                f'{width}x{height}')
+    return ''
+
+
+def sprite_records(folder: str,
+                   toml: Optional['settings_toml.TerrainSettings'] = None
+                   ) -> List[Dict[str, object]]:
+    """Every sprite the folder holds, with its record and what is wrong with it.
+
+    One dict per sprite: `name` (the entry name, `gfx0\\cloudm` for an
+    override), `sheet` (the picture it is built from, relative to the folder),
+    `size` (the sheet's pixels, or None if unreadable), the five record
+    fields, `source` (where the record came from: the TOML, a .spd sidecar,
+    or nothing), and `problem` -- the geometry complaint, or ''.
+
+    The record is the terrain's own data and belongs in
+    settings.spritetool.toml; a .spd is only read for a folder that predates
+    it. Sorted by name, so a window can show them in a stable order.
+    """
+    if toml is None:
+        toml = settings_toml.load(folder)
+    known = dict(toml.sprites) if toml else {}
+    out: List[Dict[str, object]] = []
+
+    def look(where: str, prefix: str) -> None:
+        try:
+            entries = os.listdir(where)
+        except OSError:
+            return
+        present = {f.lower(): f for f in entries
+                   if os.path.isfile(os.path.join(where, f))}
+        seen = set()
+        for low, real in sorted(present.items()):
+            split = split_picture(low)
+            if split is None:
+                continue
+            stem, kind = split
+            # A sprite is a picture that says it is one, either by its .spr
+            # infix or by having a record to its name.
+            key = f'{prefix}{stem}'
+            if kind != 'spr' and key not in known \
+                    and f'{stem}.spr.spd' not in present:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            record = dict(known.get(key) or {})
+            source = settings_toml.SETTINGS_TOML_NAME if record else ''
+            if not record:
+                spd = present.get(f'{stem}.spr.spd') or present.get(f'{stem}.spd')
+                if spd:
+                    try:
+                        with open(os.path.join(where, spd), 'r',
+                                  encoding='latin-1') as fh:
+                            record = {k: v for k, v in read_spd(fh.read()).items()
+                                      if k in settings_toml.SPRITE_KEYS}
+                        source = spd
+                    except OSError:
+                        record = {}
+            size = picture_size(os.path.join(where, real))
+            frames = int(record.get('frames', 0) or 0)
+            cell_w = int(record.get('width', 0) or 0)
+            cell_h = int(record.get('height', 0) or 0)
+            if not record:
+                problem = ('no record: a sheet does not say how many frames '
+                           'it holds, so this cannot be built')
+            elif size is None:
+                problem = f'{real} does not read as a picture'
+            else:
+                problem = sprite_geometry_problem(frames, cell_w, cell_h, size)
+            row: Dict[str, object] = {
+                'name': key,
+                'sheet': os.path.join(prefix.replace('\\', os.sep), real)
+                         if prefix else real,
+                'size': size,
+                'source': source,
+                'problem': problem,
+            }
+            for field in settings_toml.SPRITE_KEYS:
+                row[field] = int(record[field]) if field in record else None
+            out.append(row)
+
+    look(folder, '')
+    try:
+        here = os.listdir(folder)
+    except OSError:
+        here = []
+    for sub in sorted(here):
+        if sub.lower() in SPRITE_SUBFOLDERS \
+                and os.path.isdir(os.path.join(folder, sub)):
+            look(os.path.join(folder, sub), f'{sub}\\')
+    return sorted(out, key=lambda r: str(r['name']).lower())
+
+
 def split_picture(name: str) -> Optional[Tuple[str, Optional[str]]]:
     """Split a picture's filename into (stem, 'img' | 'spr' | None).
 
@@ -5050,6 +5188,15 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                         # this covers the folder that had none to convert.
                         offer_to_clear_legacy(source_dir, ask, toml)
                     offer_to_clear_build_files(source_dir, ask)
+                    # Say now which sprite records do not match their sheets.
+                    # The packer refuses on the first one it reaches, which
+                    # is a poor way to learn that three of them are wrong;
+                    # this reports all of them while the folder is being set
+                    # up, and the pack still refuses if they are left.
+                    for row in sprite_records(source_dir, toml):
+                        if row['problem']:
+                            print(f"  note: {row['name']}: {row['problem']}",
+                                  file=sys.stderr)
                 for stem, values in obj_settings.items():
                     synthetic[f'{stem}.inf'] = format_inf(values)
                 first_run = not folder_settled(source_dir) or offer_defaults

@@ -271,6 +271,15 @@ SpriteEditor writes).
   is only offered when a `.bmp`/`.png` sits beside it to rebuild it from, and
   a `.spr` only when its frame count is in the TOML or a `.spd` -- a sheet
   says nothing about its own frame count. All default to no.
+- `sprite_records(folder)` pairs every sprite with its record and says what
+  does not add up: `picture_size` reads a sheet's dimensions from its header
+  alone (a parallax sheet is 1024x32000 and decoding one to measure it costs
+  seconds), and `sprite_geometry_problem` holds the rule the packer enforces
+  -- cells stack vertically, so `cell_h * frames` must equal the sheet's
+  height and `cell_w` its width. Setup reports every sprite that fails it;
+  the packer still refuses, but on the first one it reaches, which is a poor
+  way to learn that three are wrong. The window's Sprites tab shows the same
+  data, read-only.
 - `_spd_geometry` reads the `.spr.spd` sidecars in the folder *and* in each
   `gfx0`/`gfx1` override folder, keyed as the packer looks them up (`gfx0\
   cloudm`). Coral Reef keeps 450 sprites in `gfx0`, so a migration that

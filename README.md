@@ -51,6 +51,16 @@ From a terminal it is:
 python3 -m gui
 ```
 
+The window's tabs show the folder's files and their colours, the objects'
+placement settings, the sprite records, the shared palette, and what packing
+changed. The **Sprites** tab is where a sheet's record lives: a sprite is one
+tall picture and says nothing about how it is cut into frames, so the frame
+count and cell size are carried in `settings.spritetool.toml`. A record that
+does not match its sheet is marked in the row and named in the log -- a wrong
+frame count is not a crash, it is art sliced in the wrong places -- and the
+same check runs when a folder is set up, so every wrong record is reported at
+once rather than one per failed build.
+
 ## Usage
 
 ### List an archive

@@ -329,6 +329,79 @@ class ObjectTable(QTableWidget):
         return path
 
 
+class SpriteTable(QTableWidget):
+    """The sprite record: what a sheet of frames says about itself.
+
+    A sheet is one tall picture and says nothing about how it is cut up, so
+    the frame count and cell size are data the terrain has to carry --
+    settings.spritetool.toml carries it, and until now nothing showed it. A
+    wrong record is not a crash: the art comes out sliced in the wrong
+    places, or the pack refuses on the first sprite it reaches and says
+    nothing about the rest.
+
+    So every sprite is listed with its record and its sheet side by side, and
+    anything that does not add up is said in the row rather than saved for
+    the build. Read-only: the record can be edited in the file, and a value
+    typed here would want the same validation the packer already does.
+    """
+
+    COLUMNS = ('Sprite', 'Frames', 'Cell', 'Sheet', 'Rate', 'Flags', 'Record')
+
+    def __init__(self):
+        super().__init__(0, len(self.COLUMNS))
+        self.setHorizontalHeaderLabels(self.COLUMNS)
+        self.verticalHeader().setVisible(False)
+        self.setAlternatingRowColors(True)
+        self.setSelectionBehavior(QTableWidget.SelectRows)
+        self.setEditTriggers(QTableWidget.NoEditTriggers)
+        head = self.horizontalHeader()
+        head.setSectionResizeMode(0, QHeaderView.Stretch)
+        for i in range(1, len(self.COLUMNS)):
+            head.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        self.problems = []
+
+    def load(self, folder):
+        """Fill from `folder`. Returns the number of sprites found."""
+        self.setRowCount(0)
+        self.problems = []
+        try:
+            rows = st.sprite_records(folder)
+        except Exception as exc:
+            self.problems = [str(exc)]
+            return 0
+
+        self.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            size = row['size']
+            cell = ('--' if row['width'] is None or row['height'] is None
+                    else f"{row['width']}x{row['height']}")
+            sheet = '--' if size is None else f'{size[0]}x{size[1]}'
+            flags = ('--' if row['flags'] is None
+                     else f"0x{int(row['flags']):02x}")
+            cells = [str(row['name']),
+                     '--' if row['frames'] is None else str(row['frames']),
+                     cell, sheet,
+                     '--' if row['framerate'] is None else str(row['framerate']),
+                     flags,
+                     row['source'] or 'none']
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if c:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if row['problem']:
+                    # The whole row is marked, not just the column at fault:
+                    # a frame count and a sheet disagree with each other, and
+                    # colouring one of them says the other is right.
+                    item.setForeground(Qt.red)
+                    item.setToolTip(str(row['problem']))
+                else:
+                    item.setToolTip(str(row['sheet']))
+                self.setItem(r, c, item)
+            if row['problem']:
+                self.problems.append(f"{row['name']}: {row['problem']}")
+        return len(rows)
+
+
 class Window(QMainWindow):
 
     def __init__(self):
@@ -412,9 +485,13 @@ class Window(QMainWindow):
         self._changed.setHeaderLabels(['What packing changed in your folder'])
         self._changed.setRootIsDecorated(False)
 
+        self._sprites = SpriteTable()
+
         tabs = QTabWidget()
         tabs.addTab(self._files, 'Folder')
+        self._obj_page = obj_page
         tabs.addTab(obj_page, 'Objects')
+        tabs.addTab(self._sprites, 'Sprites')
         tabs.addTab(self._palette, 'Palette')
         tabs.addTab(self._changed, 'Changes')
         self._tabs = tabs
@@ -822,10 +899,23 @@ class Window(QMainWindow):
         self._files.setSortingEnabled(True)
 
         count = self._objects.load(folder)
-        self._tabs.setTabText(1, f'Objects ({count})' if count else 'Objects')
+        self._tabs.setTabText(self._tabs.indexOf(self._obj_page),
+                              f'Objects ({count})' if count else 'Objects')
         for problem in self._objects.problems:
             self._say('err', f'  note: {settings_toml.SETTINGS_TOML_NAME}: '
                              f'{problem}')
+
+        # The sprite records. A wrong one is not a crash -- the art comes out
+        # sliced in the wrong places -- so the count carries how many did not
+        # add up, and each is said once in the log where the packer's other
+        # notes go.
+        sprites = self._sprites.load(folder)
+        bad = len(self._sprites.problems)
+        self._tabs.setTabText(
+            self._tabs.indexOf(self._sprites),
+            f'Sprites ({sprites})' if not bad else f'Sprites ({bad} wrong)')
+        for problem in self._sprites.problems:
+            self._say('err', f'  note: {problem}')
         self._show_palette(os.path.join(folder, st.PALETTE_NAME))
         self._count_colours(rows, token)
 
@@ -991,7 +1081,11 @@ class Window(QMainWindow):
                 self._changed.addTopLevelItem(
                     QTreeWidgetItem([f'{label}: {name}']))
         if self._changed.topLevelItemCount():
-            self._tabs.setTabText(3, f'Changes ({self._changed.topLevelItemCount()})')
+            # Found by widget, not by number: a tab added anywhere to the left
+            # silently renames a different one otherwise.
+            self._tabs.setTabText(
+                self._tabs.indexOf(self._changed),
+                f'Changes ({self._changed.topLevelItemCount()})')
         if self._folder:
             self._load_folder(self._folder)
 
