@@ -503,7 +503,13 @@ class Window(QMainWindow):
                 # is one the migration treats as already converted, so
                 # marking first would leave the legacy files unread.
                 self._migrate_legacy(folder)
-                st._mark_settled(folder, ())
+                # Deliberately NOT marked settled here. The defaults offer
+                # below is part of the same sitting, and it is skipped for a
+                # folder that is already settled -- so marking now would
+                # answer a question that has not been asked and put the
+                # shipped art out of reach of every new folder. setup_terrain
+                # marks it once the offer has been made, and leaves it
+                # unmarked when the offer is refused so it stands next time.
 
         self._folder = folder
         self._answers = {}
@@ -597,6 +603,12 @@ class Window(QMainWindow):
         """
         lacking = self.setup_needed(folder)
         if not lacking:
+            # Nothing to offer -- the folder has every required piece, or
+            # there are no presets to lend. Either way the questions are
+            # over, so mark it now: setup_terrain below is what usually
+            # does that, and it is not going to run.
+            if not st.folder_settled(folder):
+                st._mark_settled(folder, ())
             return
 
         pretty = ', '.join(sorted({p.split('.')[0] for p in lacking}))

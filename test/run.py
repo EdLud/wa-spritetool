@@ -567,6 +567,7 @@ def check_toml(no_numpy=False):
     """
     sys.path.insert(0, ROOT)
     import settings_toml
+    import spritetool
     good = True
 
     # Round-trip: pack flat, unpack the result, and the TOML must hold every
@@ -857,6 +858,60 @@ def check_toml(no_numpy=False):
                                  else 'unpack-terrain lost the icon')) and good
         finally:
             shutil.rmtree(packtmp, ignore_errors=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # A brand-new folder must still be able to reach the shipped defaults.
+    # The window marked a folder settled as soon as its setup box was
+    # answered, and the defaults offer skips a settled folder -- so every new
+    # folder was marked before being asked and the presets became
+    # unreachable. setup_terrain is what marks it, after the offer, and it
+    # leaves the folder unmarked when the offer is refused so it stands next
+    # time. Checked through the functions the window calls, so this runs
+    # whether or not PySide6 is installed.
+    tmp = tempfile.mkdtemp(prefix='toml-offer-')
+    try:
+        bare = os.path.join(tmp, 'bare')
+        os.makedirs(bare)
+        shutil.copyfile(
+            os.path.join(HERE, 'pack', 'flat', 'build',
+                         sorted(f for f in os.listdir(
+                             os.path.join(HERE, 'pack', 'flat', 'build'))
+                             if f.endswith('.png'))[0]),
+            os.path.join(bare, 'obj-only.png'))
+        # setup_terrain narrates each piece it offers; that is right on a
+        # command line and noise in a fixture, so it is kept out of the way.
+        import contextlib, io
+        quiet = contextlib.redirect_stdout(io.StringIO())
+        if spritetool.folder_settled(bare):
+            good = say(False, 'new folder reaches the defaults',
+                       'a fresh folder reported itself settled')
+        else:
+            # Refusing leaves it unmarked, so the offer stands next time.
+            with quiet:
+                _b, refused = spritetool.setup_terrain(
+                    bare, spritetool.answer_with({'defaults.': False}))
+            if not refused:
+                good = say(False, 'new folder reaches the defaults',
+                           'declining the defaults did not stop the setup')
+            elif spritetool.folder_settled(bare):
+                good = say(False, 'new folder reaches the defaults',
+                           'marked settled after a refusal, so the offer '
+                           'would never come back')
+            else:
+                # Accepting copies the art in and marks it, once.
+                answers = {f'defaults.{p.split(".")[0]}': True
+                           for p in spritetool.REQUIRED_ASSETS}
+                with contextlib.redirect_stdout(io.StringIO()):
+                    got, refused2 = spritetool.setup_terrain(
+                        bare, spritetool.answer_with(answers))
+                settled = spritetool.folder_settled(bare)
+                good = say(bool(got) and not refused2 and settled,
+                           'new folder reaches the defaults',
+                           f'{len(got)} piece(s) borrowed, then settled'
+                           if got and not refused2 and settled
+                           else f'borrowed={len(got)} refused={refused2!r} '
+                                f'settled={settled}') and good
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
