@@ -15,6 +15,8 @@ Groups:
   jobs      every --jobs setting building the same archive
   padding   compressed art widened to a multiple of 4, its height left alone
   colours   numpy and pure-Python agreeing on what they count
+  toml      the settings.spritetool.toml model: round-trip, migration, the
+            setup prompt, and decompress no longer writing a .dir.txt
   gui       the window builds and its job process imports no Qt (skipped
             without PySide6, which the tool does not depend on)
   nested    the pool-inside-a-pool agreeing with no pool at all. NOT run by
@@ -54,8 +56,11 @@ def _blocked(name, *a, **k):
     return _real(name, *a, **k)
 builtins.__import__ = _blocked
 sys.argv = sys.argv[1:]
+# The tool now imports settings_toml from beside itself; the shim runs from a
+# temp dir, so put the repo root back on the path for that import to find.
+sys.path.insert(0, %r)
 exec(open(%r).read(), {"__name__": "__main__", "__file__": %r})
-''' % (TOOL, TOOL)
+''' % (ROOT, TOOL, TOOL)
 
 
 class Failed(Exception):
@@ -153,14 +158,21 @@ def check_manifest(no_numpy=False):
 # ------------------------------------------------------------------- pack --
 
 def _pack_fixture(name, flags, no_numpy=False):
-    """Copy a pristine fixture, pack the copy, return (out_dir, tmp, rc, out)."""
+    """Copy a pristine fixture, pack the copy, return (out_dir, tmp, rc, out).
+
+    --yes=setup.confirm because the fixtures are pristine inputs with no
+    settings.spritetool.toml yet: packing now asks to set the folder up first.
+    The answer only writes the TOML marker into the copied source folder -- it
+    is not an archive entry, so the packed bytes are untouched by it.
+    """
     fixture = os.path.join(HERE, 'pack', name)
     tmp = tempfile.mkdtemp(prefix=f'pack-{name}-')
     work = os.path.join(tmp, 'src')
     shutil.copytree(fixture, work)
     out = os.path.join(tmp, 'out')
     rc, stdout, stderr = tool(
-        ['pack-terrain', os.path.join(work, 'build'), out] + flags, no_numpy)
+        ['pack-terrain', os.path.join(work, 'build'), out,
+         '--yes=setup.confirm'] + flags, no_numpy)
     return out, tmp, rc, stdout + stderr
 
 
@@ -226,14 +238,15 @@ def check_pack(no_numpy=False):
 
 
 def _check_listing_needs_icon(no_numpy=False):
-    """A folder with a .dir.txt and no icon must be refused, not packed.
+    """A folder with a .dir.txt and no icon is offered one, not refused.
 
     A listing names the archive's entries, and the icon is not one of them --
-    it goes beside Level.dir. So the borrow-a-default step that covers a
-    scanned folder never runs, and a SpriteEditor-era folder (which keeps its
-    icon in the installed terrain, not the build) would otherwise pack all the
-    way to the end and mention the missing icon in its closing notes, having
-    written an archive the game will not load.
+    it goes beside Level.dir. That is exactly why offering a default is safe
+    here: it does not touch the entry set the listing fixes. A SpriteEditor-
+    era folder keeps its icon in the installed terrain rather than the build,
+    so it reaches us without one, and refusing it outright turns a missing
+    piece into a wall. Taking the offer packs; declining still refuses,
+    because the game will not load a terrain with no icon.
     """
     fixture = os.path.join(HERE, 'pack', 'flat')
     tmp = tempfile.mkdtemp(prefix='pack-listing-')
@@ -246,18 +259,37 @@ def _check_listing_needs_icon(no_numpy=False):
                   encoding='latin-1', newline='') as fh:
             fh.write(''.join(f'{n[:-4]}.img\r\n' for n in names))
 
+        # Declining the icon still refuses, and writes no archive.
         out = os.path.join(tmp, 'out')
         rc, stdout, stderr = tool(
-            ['pack-terrain', build, out, '--defaults'], no_numpy)
+            ['pack-terrain', build, out, '--yes=setup.confirm',
+             '--no=defaults.icon'], no_numpy)
         log = stdout + stderr
         if not rc:
             return say(False, 'pack listing without icon', 'packed anyway')
-        if 'no icon' not in log:
+        if 'icon' not in log:
             return say(False, 'pack listing without icon', _tail(log))
         if os.path.exists(out):
             return say(False, 'pack listing without icon',
                        'refused, but wrote an output folder')
-        return say(True, 'pack listing without icon', 'refused')
+
+        # Taking the offer packs, and the icon lands beside Level.dir as
+        # TEXT.img rather than becoming an entry the listing never named.
+        out2 = os.path.join(tmp, 'out2')
+        rc2, stdout2, stderr2 = tool(
+            ['pack-terrain', build, out2, '--yes=setup.confirm',
+             '--yes=defaults.icon'], no_numpy)
+        if rc2:
+            return say(False, 'pack listing without icon',
+                       _tail(stdout2 + stderr2))
+        if not os.path.exists(os.path.join(out2, 'Level.dir')):
+            return say(False, 'pack listing without icon',
+                       'accepted the icon but wrote no Level.dir')
+        if not os.path.exists(os.path.join(out2, 'TEXT.img')):
+            return say(False, 'pack listing without icon',
+                       'no TEXT.img beside the archive')
+        return say(True, 'pack listing without icon',
+                   'offered: no refuses, yes packs')
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -508,10 +540,287 @@ def check_colours(no_numpy=False):
                f'{len(a or [])} colours' if a == b else 'palettes differ')
 
 
+# ------------------------------------------------------------------- toml --
+
+def _pack_flat(out_name, extra, no_numpy=False):
+    """Pack the flat fixture into a temp dir; return (level_dir, src, tmp)."""
+    fixture = os.path.join(HERE, 'pack', 'flat')
+    tmp = tempfile.mkdtemp(prefix='toml-')
+    work = os.path.join(tmp, 'src')
+    shutil.copytree(fixture, work)
+    src = os.path.join(work, 'build')
+    out = os.path.join(tmp, out_name)
+    rc, stdout, stderr = tool(
+        ['pack-terrain', src, out, '--yes=setup.confirm'] + extra, no_numpy)
+    return os.path.join(out, 'Level.dir'), src, tmp, rc, stdout + stderr
+
+
+def check_toml(no_numpy=False):
+    """The settings.spritetool.toml model: round-trip, migration, limited
+    mode, the setup prompt, and decompress no longer writing a listing.
+
+    Built on the flat fixture rather than Coral Reef: the round-trip through
+    a shipped 6 MB terrain takes twenty seconds, which is the difference
+    between a suite that gets run and one that does not. flat packs in about
+    a second and still holds objects and a borrowed sprite, so every assertion
+    the model needs is available from it.
+    """
+    sys.path.insert(0, ROOT)
+    import settings_toml
+    good = True
+
+    # Round-trip: pack flat, unpack the result, and the TOML must hold every
+    # object's placement and the sprite's geometry. Packing the unpacked
+    # folder again must give the same archive byte for byte -- the pixels are
+    # what a BMP round-trip preserves, and idempotence is what proves the
+    # settings, not drift, decide them.
+    level, _src, tmp, rc, log = _pack_flat('a', ['--defaults'], no_numpy)
+    try:
+        if rc:
+            good = say(False, 'toml round-trip (setup pack)', _tail(log))
+        else:
+            un = os.path.join(tmp, 'unpacked')
+            rc, _, err = tool(['unpack-terrain', level, un], no_numpy)
+            if rc:
+                good = say(False, 'toml round-trip (unpack)', _tail(err))
+            else:
+                settled = settings_toml.load(un)
+                objects = [f[:-4] for f in os.listdir(
+                    os.path.join(HERE, 'pack', 'flat', 'build'))
+                    if f.endswith('.png')]
+                missing = [o for o in objects
+                           if o.lower() not in settled.objects]
+                sprites = [n for n in settled.sprites
+                           if not n.lower().startswith('gfx')]
+                if missing:
+                    good = say(False, 'toml round-trip (objects)',
+                               'missing ' + ', '.join(missing[:3]))
+                elif not sprites:
+                    good = say(False, 'toml round-trip (sprites)',
+                               'no sprite geometry recorded')
+                else:
+                    out2 = os.path.join(tmp, 'b')
+                    rc, _, err = tool(
+                        ['pack-terrain', un, out2, '--no-defaults'], no_numpy)
+                    same = (not rc and os.path.exists(out2 + '/Level.dir')
+                            and md5(out2 + '/Level.dir') == md5(level))
+                    good = say(same, 'toml round-trip',
+                               f'{len(settled.objects)} objects, '
+                               f'{len(sprites)} sprite(s), repacks '
+                               + ('identically' if same else _tail(err)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # Migration: a folder with object_settings.txt, a loose .inf and a
+    # .spr.spd, packed with --yes=settings.convert_toml, must hold the
+    # migrated values in the TOML and pack the same archive as before.
+    fixture = os.path.join(HERE, 'pack', 'flat')
+    tmp = tempfile.mkdtemp(prefix='toml-mig-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        # A combined file covering one object, a loose .inf covering another,
+        # and a sprite sidecar -- the three legacy sources at once.
+        with open(os.path.join(build, 'object_settings.txt'), 'w') as fh:
+            fh.write('obj-floor-rock.png\nprobability = 9\nwhere = 3\n')
+        with open(os.path.join(build, 'obj-side-vent.inf'), 'w') as fh:
+            fh.write('7\n0\n0\n1\n1\n0\n')
+        out_a = os.path.join(tmp, 'a')
+        flags = ['--yes=setup.confirm', '--yes=settings.convert_toml',
+                 '--defaults']
+        rc, stdout, stderr = tool(['pack-terrain', build, out_a] + flags,
+                                  no_numpy)
+        log = stdout + stderr
+        settled = settings_toml.load(build)
+        rock = settled.objects.get('obj-floor-rock') if settled else None
+        vent = settled.objects.get('obj-side-vent') if settled else None
+        if rc:
+            good = say(False, 'toml migration', _tail(log))
+        elif rock is None or rock[0] != 9:
+            good = say(False, 'toml migration',
+                       f'object_settings.txt value lost: {rock}')
+        elif vent is None or vent[0] != 7:
+            good = say(False, 'toml migration',
+                       f'loose .inf value lost: {vent}')
+        elif not os.path.exists(os.path.join(build, 'object_settings.txt')):
+            good = say(False, 'toml migration', 'legacy file was deleted')
+        else:
+            good = say(True, 'toml migration',
+                       'object_settings.txt and .inf folded into the TOML, '
+                       'legacy files left alone')
+
+        # Clearing the legacy files: --yes=settings.clear_legacy deletes the
+        # files the TOML now answers for, and the archive must not move for
+        # it. The .spr.spd sidecars go too, which is only safe because the
+        # migration copies their geometry into [sprite.*] first -- a sheet
+        # says nothing about its own frame count.
+        shutil.rmtree(work)
+        shutil.copytree(fixture, work)
+        with open(os.path.join(build, 'obj-side-vent.inf'), 'w') as fh:
+            fh.write('7\n0\n0\n1\n1\n0\n')
+        # The fixture ships no sidecars of its own; --defaults copies some in
+        # with the borrowed art, and those belong to that art rather than to
+        # the author, so they are not the clear-out's business. Give the
+        # migration one sidecar that IS the author's, and check that one.
+        with open(os.path.join(build, 'terrain.spr.spd'), 'w') as fh:
+            fh.write('frames = 2\nwidth = 4\nheight = 8\n'
+                     'framerate = 0\nflags = 0\n')
+        out_c = os.path.join(tmp, 'c')
+        rc, stdout, stderr = tool(
+            ['pack-terrain', build, out_c, '--yes=setup.confirm',
+             '--yes=settings.convert_toml', '--yes=settings.clear_legacy',
+             '--defaults'], no_numpy)
+        log = stdout + stderr
+        settled = settings_toml.load(build)
+        # Only what the author had: the presets' own sidecars arrive later
+        # and stay, so they are not counted as left behind.
+        left = [f for f in os.listdir(build)
+                if f in ('obj-side-vent.inf', 'terrain.spr.spd',
+                         'object_settings.txt')]
+        if rc:
+            good = say(False, 'toml clear legacy', _tail(log))
+        elif left:
+            good = say(False, 'toml clear legacy',
+                       f'still there: {", ".join(sorted(left)[:3])}')
+        elif settled is None or settled.objects.get('obj-side-vent',
+                                                    [0])[0] != 7:
+            good = say(False, 'toml clear legacy', 'settings lost with the files')
+        elif settled.sprites.get('terrain', {}).get('frames') != 2:
+            good = say(False, 'toml clear legacy',
+                       f'sidecar deleted without recording its geometry: '
+                       f'{settled.sprites.get("terrain")}')
+        else:
+            # The proof it was safe: the folder still packs with none of the
+            # files it just lost, and lands the same archive.
+            out_d = os.path.join(tmp, 'd')
+            rc2, _, err2 = tool(['pack-terrain', build, out_d], no_numpy)
+            same = (not rc2
+                    and os.path.exists(os.path.join(out_d, 'Level.dir'))
+                    and md5(os.path.join(out_d, 'Level.dir'))
+                    == md5(os.path.join(out_c, 'Level.dir')))
+            good = say(same, 'toml clear legacy',
+                       'sidecar and .inf cleared, geometry kept, repacks '
+                       'identically' if same else _tail(err2)) and good
+
+        # Limited mode: --no=settings.convert_toml still packs, writes no TOML.
+        shutil.rmtree(work)
+        shutil.copytree(fixture, work)
+        with open(os.path.join(build, 'object_settings.txt'), 'w') as fh:
+            fh.write('obj-floor-rock.png\nprobability = 9\n')
+        out_b = os.path.join(tmp, 'b')
+        rc, stdout, stderr = tool(
+            ['pack-terrain', build, out_b, '--yes=setup.confirm',
+             '--no=settings.convert_toml', '--defaults'], no_numpy)
+        toml_path = os.path.join(build, settings_toml.SETTINGS_TOML_NAME)
+        # The setup marker is a TOML, but it must hold no object tables.
+        settled = settings_toml.load(build)
+        if rc:
+            good = say(False, 'toml limited mode', _tail(stdout + stderr))
+        elif settled and settled.objects:
+            good = say(False, 'toml limited mode',
+                       'wrote object settings despite the decline')
+        else:
+            good = say(True, 'toml limited mode',
+                       'packs, no object settings written')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # The setup prompt: --no=setup.confirm stops, --yes packs regardless of
+    # the folder's name (it no longer has to be called build).
+    tmp = tempfile.mkdtemp(prefix='toml-setup-')
+    try:
+        work = os.path.join(tmp, 'mypics')        # not "build", on purpose
+        shutil.copytree(fixture, work)
+        pics = os.path.join(work, 'mypics')
+        os.rename(os.path.join(work, 'build'), pics)
+        rc, _, _ = tool(['pack-terrain', pics, os.path.join(tmp, 'o1'),
+                         '--no=setup.confirm', '--defaults'], no_numpy)
+        stopped = rc != 0
+        rc2, _, _ = tool(['pack-terrain', pics, os.path.join(tmp, 'o2'),
+                          '--yes=setup.confirm', '--defaults'], no_numpy)
+        packed = rc2 == 0
+        good = say(stopped and packed, 'setup prompt',
+                   '--no stops, --yes packs a folder not called build'
+                   if stopped and packed else
+                   f'no->rc{rc}, yes->rc{rc2}') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # decompress writes no <name>.dir.txt, but a terrain's index.txt (a real
+    # archive entry) still comes through, and the folder still packs back.
+    tmp = tempfile.mkdtemp(prefix='toml-dec-')
+    try:
+        level, _s, packtmp, rc, log = _pack_flat('d', ['--defaults'], no_numpy)
+        try:
+            out = os.path.join(tmp, 'dec')
+            rc, _, err = tool(['decompress', level, out], no_numpy)
+            folder = os.path.join(out, 'Level')
+            listing = os.path.join(folder, 'Level.dir.txt')
+            index = os.path.join(folder, 'index.txt')
+            if rc:
+                good = say(False, 'decompress listing gone', _tail(err))
+            elif os.path.exists(listing):
+                good = say(False, 'decompress listing gone',
+                           'Level.dir.txt still written')
+            elif not os.path.exists(index):
+                good = say(False, 'decompress listing gone',
+                           'index.txt did not come through')
+            else:
+                rc2, _, err2 = tool(
+                    ['pack', folder, os.path.join(tmp, 're')], no_numpy)
+                good = say(rc2 == 0, 'decompress listing gone',
+                           'no .dir.txt, index.txt kept, folder repacks'
+                           if rc2 == 0 else _tail(err2))
+        finally:
+            shutil.rmtree(packtmp, ignore_errors=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # An unanswered question must never block. stdin here is an open pipe that
+    # nobody writes to -- a build server, or any run whose input is a pipe --
+    # which never reaches EOF, so a question that waits on it waits for ever.
+    # The listing prompt sits on the ordinary pack-terrain path, so this is a
+    # hung build rather than an edge case. Closed stdin is the easy half; the
+    # silent pipe is the one that caught us.
+    tmp = tempfile.mkdtemp(prefix='toml-tty-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        names = sorted(f for f in os.listdir(build) if f.endswith('.png'))
+        with open(os.path.join(build, 'Level.dir.txt'), 'w',
+                  encoding='latin-1', newline='') as fh:
+            fh.write(''.join(f'{n[:-4]}.img\r\n' for n in names))
+        read_end, write_end = os.pipe()
+        try:
+            cmd = [sys.executable, TOOL, 'pack-terrain', build,
+                   os.path.join(tmp, 'out'), '--defaults',
+                   '--yes=setup.confirm']
+            try:
+                done = subprocess.run(cmd, stdin=read_end, capture_output=True,
+                                      text=True, cwd=ROOT, timeout=60)
+            except subprocess.TimeoutExpired:
+                good = say(False, 'no question blocks on a silent stdin',
+                           'hung waiting for an answer that cannot arrive')
+            else:
+                log = done.stdout + done.stderr
+                good = say('not a terminal' in log,
+                           'no question blocks on a silent stdin',
+                           'took the default and said so'
+                           if 'not a terminal' in log else _tail(log)) and good
+        finally:
+            os.close(read_end)
+            os.close(write_end)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return good
+
+
 GROUPS = {'decode': check_decode, 'manifest': check_manifest,
           'pack': check_pack, 'jobs': check_jobs, 'nested': check_nested,
           'padding': check_padding, 'colours': check_colours,
-          'gui': check_gui}
+          'toml': check_toml, 'gui': check_gui}
 
 #: Left out unless named or --all is given. Slow enough to change how often
 #: the suite gets run, which is its own kind of risk.

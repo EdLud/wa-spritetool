@@ -41,8 +41,9 @@ No installation step: run the script in place.
 python3 spritetool.py list <archive.dir>
 python3 spritetool.py extract <archive.dir> [output_dir]
 python3 spritetool.py decompress <archive.dir|folder> [output_dir] [--gif]
+python3 spritetool.py unpack-terrain <Level.dir> [output_dir]
 python3 spritetool.py pack <folder|name.dir.txt> [output_dir]
-python3 spritetool.py pack-terrain build/ [output_dir] [flags]
+python3 spritetool.py pack-terrain <folder> [output_dir] [flags]
 python3 spritetool.py land <land001.dat|mission.WSM> [output_dir]
 python3 spritetool.py version | help
 ```
@@ -51,15 +52,36 @@ Note: the README's examples say `wa_spritetool.py`; the actual file is
 `spritetool.py`. The tool's own help banner calls itself
 `wa-py-spriteHelper`. These names refer to the same script.
 
-`pack-terrain` requires the input folder to be named `build`, refuses to
-write into the source folder, validates the terrain against the game's
-loading rules (112-colour shared palette budget, required assets, icon
-dimensions), and can borrow missing assets from `presets/` (`--defaults` /
-`--no-defaults`). See the README for the full flag list.
+`pack-terrain` confirms the folder on first use (a `setup.confirm` prompt
+that reports its contents -- any folder may be a terrain now, the name no
+longer decides), offers a default icon rather than refusing a folder that
+has none (including on the `.dir.txt` listing path, where the icon is not
+one of the entries the listing names), refuses to write into the source
+folder, validates the terrain against the game's loading rules (112-colour
+shared palette budget, required assets, icon dimensions), and can borrow
+missing assets from `presets/` (`--defaults` / `--no-defaults`). See the
+README for the full flag list.
+
+`unpack-terrain` takes a `Level.dir` apart into a spritetool-owned build
+folder: the art as BMP, and every object's placement and every terrain
+sprite's geometry written to `settings.spritetool.toml`. The result packs
+straight back with `pack-terrain`.
+
+`decompress` no longer writes a `<name>.dir.txt` listing: it was a
+synthesized pack argument, not archive data, and `pack` rebuilds the order
+from a folder scan when none is present. `index.txt`, a real archive entry,
+is still copied through as data.
 
 ## Repository layout
 
 - `spritetool.py` — the entire tool: parsers, encoders, CLI
+- `settings_toml.py` — the terrain settings file `settings.spritetool.toml`:
+  a hand-rolled TOML reader/writer (no dependency, Python 3.8+ preserved) and
+  the `TerrainSettings` model. This one file replaces the SpriteEditor-era
+  formats the tool used to write for hand-editing (`object_settings.txt`,
+  per-object `.inf`, the `.spr.spd` sidecar), which are now read only to
+  migrate them. It imports nothing from the repo, so both `spritetool` and
+  `gui` can import it without a cycle.
 - `SPR_FORMAT.md` — reverse-engineering notes for the sprite format (working
   notes, with unresolved points marked)
 - `README.md` — user documentation; the terrain-authoring workflow is
@@ -92,7 +114,8 @@ One file, organised top to bottom roughly as:
   (`plan_shared_palette`, `cut_palette`), the 112-colour budget
 - encoders: `encode_sprite`, `encode_image`, `encode_icon`
 - terrain packing: `scan_terrain`, `archive_problems`, object settings
-  (`object_settings.txt` / `.inf` handling), `DirectoryWriter`
+  (`settings.spritetool.toml` via `settings_toml`, with legacy
+  `object_settings.txt` / `.inf` read for migration), `DirectoryWriter`
 - CLI: `main()` dispatches on `sys.argv[1]`
 
 Parsers return `bool` from `parse()` and populate attributes; they never
@@ -108,7 +131,7 @@ One command runs all of it:
 ```bash
 python3 test/run.py               # everything
 python3 test/run.py --no-numpy    # again, on the pure-Python paths
-python3 test/run.py pack          # one group: decode|manifest|pack|colours
+python3 test/run.py pack          # one group: decode|manifest|pack|colours|toml
 ```
 
 Non-zero if anything moved. What it covers:
@@ -157,6 +180,16 @@ Non-zero if anything moved. What it covers:
   different orders, which feeds Pillow's median cut. It turns out not to change
   the result, which is worth continuing to check rather than assuming.
 
+- The `toml` group covers the settings model: an unpack-terrain round-trip
+  (the TOML holds every object's placement and every sprite's geometry, and
+  the unpacked folder repacks byte-for-byte identically), migration of the
+  legacy formats into the TOML, limited mode when conversion is declined, the
+  `setup.confirm` prompt, and that `decompress` writes no `.dir.txt` while
+  still passing `index.txt` through. It builds on the `flat` fixture rather
+  than Coral Reef -- a round-trip through a shipped 6 MB terrain takes twenty
+  seconds, which is the difference between a suite that gets run and one that
+  does not.
+
 - After touching `extras/colors.py` or `extras/gif.py`, run
   `./extras/preview_extras_gifs.py` and look at the GIFs — a break there
   often shows as wrong motion rather than an error. Blank output is reported
@@ -192,6 +225,35 @@ SpriteEditor writes).
   structural rather than a habit: a prompt reachable only from a terminal
   cannot be reached from a window, and there was one of those.
   `--defaults` / `--no-defaults` are shorthand for the `defaults.` group.
+  The keys are `setup.confirm` (set a folder up as a terrain),
+  `settings.convert_toml` (migrate legacy object settings),
+  `settings.convert_listing` (pack from scan + TOML instead of a
+  `.dir.txt`/`index.txt` listing), `settings.clear_legacy` (delete the
+  SpriteEditor-era files the TOML now answers for), `defaults.<piece>`, and
+  `palette.repalette`. `settings.consolidate` is superseded on the TOML path.
+- Questions never block a run that has no terminal. When stdin is not a TTY
+  and nothing answered the key, the question takes its own default and says
+  `[n, not a terminal]`. A pipe nobody writes to never reaches EOF, so
+  waiting on it would hang the build rather than ask anything; `--yes=` /
+  `--no=` is how a script answers.
+- Converting a folder offers to clear the legacy files away
+  (`settings.clear_legacy`, default no). Only files the TOML wholly answers
+  for: the per-object `.inf`/`.txt`, `object_settings.txt`, the old
+  `settings.spritetool` marker, and a `.spr.spd` for a sprite the TOML holds
+  geometry for -- the migration copies that geometry into `[sprite.*]` first,
+  since a sheet says nothing about its own frame count. `index.txt` and
+  `<name>.dir.txt` are never deleted: the first is a real archive entry and
+  the second is the author's record of entry order. Art borrowed from
+  `presets/` keeps its own sidecars, which are not the author's to lose.
+- A terrain's settings live in `settings.spritetool.toml`, read and written
+  through `settings_toml.py` -- a hand-rolled TOML parser/writer, no
+  dependency, Python 3.8+ preserved (the stdlib's `tomllib` is 3.11+ and
+  read-only). The legacy `.inf` / `.spr.spd` / `object_settings.txt` formats
+  are read-only, for migration; the tool never writes them again. The `.inf`
+  entries written INTO the archive are unchanged -- that is the game's
+  format, not the author's. The `build/`-name gate is gone: any folder may be
+  a terrain, confirmed by the `setup.confirm` prompt rather than refused by
+  name.
 - Process pools go through `_pool()`, which asks for the `spawn` start method
   everywhere so there is one behaviour to test rather than one per platform,
   and marks each worker via the initializer. How many processes to use is
@@ -236,6 +298,7 @@ not be you — can pick up cleanly:
   parsers, and never let a malformed file produce a silently zero-padded
   image — that hides format bugs (see `DecompressionError`'s docstring).
 - `pack-terrain` writes into the user's build folder (borrowed defaults,
-  `object_settings.txt`, migrated `.inf` files). Deleting or overwriting
-  user files there must stay behind explicit prompts or flags.
+  `settings.spritetool.toml`). Deleting or overwriting user files there must
+  stay behind explicit prompts or flags -- the legacy settings files are
+  migrated only with a yes, and never deleted.
 - License: GPL-3.0; see `LICENSE`.

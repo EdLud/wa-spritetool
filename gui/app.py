@@ -24,6 +24,7 @@ from .job import ANSWER_CANCEL, ANSWER_NO, ANSWER_YES
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import spritetool as st                                        # noqa: E402
+import settings_toml                                          # noqa: E402
 
 
 APP_NAME = 'spritetool'
@@ -230,23 +231,31 @@ class ObjectTable(QTableWidget):
             self.problems = [str(exc)]
             return 0
 
-        # object_settings.txt is keyed by the picture's filename and
-        # scan_terrain hands back bare stems, so the two have to be brought
-        # together the same way the packer does it -- through split_picture,
-        # which knows the .img/.spr infix SpriteEditor used. Matching on the
-        # raw name instead silently misses every object, and the table would
-        # show defaults it would then save over the author's real settings.
+        # settings.spritetool.toml is the source of truth; the SpriteEditor-
+        # era files are read only to show what would be migrated. The stems
+        # the scan hands back and the keys the legacy file used are brought
+        # together through st.object_stem, the same normalisation the packer
+        # uses -- matching on the raw name instead silently misses every
+        # object, and the table would show defaults it then saves over the
+        # author's real settings.
         settings = {}
-        combined = os.path.join(folder, st.SETTINGS_NAME)
-        if os.path.exists(combined):
-            with open(combined, encoding='latin-1') as fh:
-                by_picture, problems = st.parse_settings(fh.read())
-            if problems:
-                self.problems = problems
+        toml = settings_toml.load(folder)
+        if toml is not None:
+            if toml.problems:
+                self.problems = toml.problems
                 return 0
-            for picture, values in by_picture.items():
-                split = st.split_picture(picture)
-                settings[(split[0] if split else picture).lower()] = values
+            settings = {stem.lower(): list(values)
+                        for stem, values in toml.objects.items()}
+        else:
+            combined = os.path.join(folder, st.SETTINGS_NAME)
+            if os.path.exists(combined):
+                with open(combined, encoding='latin-1') as fh:
+                    by_picture, problems = st.parse_settings(fh.read())
+                if problems:
+                    self.problems = problems
+                    return 0
+                for picture, values in by_picture.items():
+                    settings[st.object_stem(picture)] = values
         for stem in objects:
             if stem.lower() in settings:
                 continue
@@ -307,23 +316,15 @@ class ObjectTable(QTableWidget):
         return out
 
     def save(self, folder):
-        """Write object_settings.txt. Returns what it wrote to.
+        """Write settings.spritetool.toml. Returns what it wrote to.
 
-        Keyed by the picture's filename and written with '\\n' newlines, both
-        matching what the packer writes -- otherwise every save would show up
-        as a change to the whole file, and a folder would never look settled.
+        The TOML is keyed by the object's stem and written deterministically,
+        so a save only shows as a change where a value actually moved.
         """
-        picture_of = {}
-        for f in os.listdir(folder):
-            split = st.split_picture(f)
-            if split:
-                picture_of.setdefault(split[0].lower(), f)
-        rows = [(picture_of.get(stem.lower(), stem), values)
-                for stem, values in sorted(self.values(),
-                                           key=lambda kv: kv[0].lower())]
-        path = os.path.join(folder, st.SETTINGS_NAME)
-        with open(path, 'w', encoding='latin-1', newline='\n') as fh:
-            fh.write(st.format_settings(rows))
+        toml = settings_toml.load(folder) or settings_toml.TerrainSettings()
+        toml.problems = []
+        toml.objects = {stem: list(values) for stem, values in self.values()}
+        path = settings_toml.save(folder, toml)
         self._dirty = False
         return path
 
@@ -383,7 +384,7 @@ class Window(QMainWindow):
         self._load_token = 0
 
         self._objects = ObjectTable()
-        save_objects = QPushButton(f'Save {st.SETTINGS_NAME}')
+        save_objects = QPushButton(f'Save {settings_toml.SETTINGS_TOML_NAME}')
         save_objects.clicked.connect(self._save_objects)
         obj_page = QWidget()
         obj_box = QVBoxLayout(obj_page)
@@ -457,17 +458,52 @@ class Window(QMainWindow):
         selftest, or anything driving the window -- would simply block forever
         on a modal box nobody can answer.
         """
-        # The name is the only thing that says a folder was meant to be a
-        # terrain: everything a terrain needs can be stood in for, and a
-        # folder holding one picture is a legitimate starting point, so there
-        # is nothing in the contents to test. Refused here rather than after
-        # the packing button, where it would read as the pack having failed.
-        refuse = st._terrain_needs(folder)
-        if refuse:
+        # Any folder may be a terrain now -- the name no longer decides. What
+        # remains is the setup confirmation, shown for a folder that is not
+        # set up yet, with its contents reported rather than a refusal. The
+        # one safeguard: nothing at all to pack is a plain message, not a
+        # dialog.
+        if not st.folder_settled(folder):
+            count, found = st.describe_terrain_folder(folder)
+            if count == 0 and not found:
+                msg = (f'{os.path.basename(folder.rstrip(os.sep))} has '
+                       f'nothing to pack -- no objects and no terrain assets.')
+                if ask:
+                    QMessageBox.warning(self, 'Nothing to pack', msg)
+                self._say('err', msg)
+                return
             if ask:
-                QMessageBox.warning(self, 'Not a build folder', refuse)
-            self._say('err', refuse)
-            return
+                pretty = ', '.join(found) if found else 'none yet'
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Question)
+                box.setWindowTitle('spritetool')
+                box.setText(f"Set up '{os.path.basename(folder.rstrip(os.sep))}' "
+                            f"as a spritetool terrain?")
+                box.setInformativeText(
+                    f'{count} object(s) discovered; terrain assets found: '
+                    f'{pretty}.\n\n'
+                    f'This writes {settings_toml.SETTINGS_TOML_NAME} to the '
+                    f'folder.')
+                yes = box.addButton('Set it up', QMessageBox.YesRole)
+                box.addButton('Leave it alone', QMessageBox.NoRole)
+                box.setDefaultButton(yes)
+                box.exec()
+                if box.clickedButton() is not yes:
+                    self._say('err', 'setting the folder up was declined')
+                    return
+                # Setting the folder up is also when its SpriteEditor-era
+                # files are read into the TOML -- and the point to offer
+                # clearing them away, while the author is still looking at
+                # the folder they just dropped. Doing it here rather than at
+                # the first pack keeps the file browser honest from the
+                # start; the settings are written before anything is asked,
+                # so declining costs nothing either way.
+                #
+                # Before the marker, not after: a folder with any TOML at all
+                # is one the migration treats as already converted, so
+                # marking first would leave the legacy files unread.
+                self._migrate_legacy(folder)
+                st._mark_settled(folder, ())
 
         self._folder = folder
         self._answers = {}
@@ -487,6 +523,42 @@ class Window(QMainWindow):
         if ask:
             self._offer_setup(folder)
 
+    def _migrate_legacy(self, folder):
+        """Fold the SpriteEditor-era settings into the TOML, then offer to
+        clear them away.
+
+        The same two steps the CLI takes on its first pack, done here so a
+        folder is tidy from the moment it is set up rather than after its
+        first build. Everything is read and written before anything is
+        deleted, so a yes cannot lose settings and a no costs nothing.
+        """
+        try:
+            _names, objects, _notes = st.scan_terrain(folder)
+        except Exception as exc:
+            self._say('err', f'  note: could not read {folder}: {exc}')
+            return
+        recent = ['']
+        ask = self._dialog_asker({}, recent)
+        had_toml = st.settings_toml.load(folder)
+        try:
+            # Converts and, having written the TOML, offers the deletion
+            # itself. Only a folder that had no TOML takes that path.
+            _settings, trouble = st._settle_object_settings(
+                folder, objects, ask, had_toml)
+        except Exception as exc:
+            self._say('err', f'  note: settings did not migrate: {exc}')
+            return
+        if trouble:
+            # Not fatal here: the pack says the same thing in its own words,
+            # and a clash is the author's to resolve rather than the drop's.
+            self._say('err', f'  note: {trouble}')
+            return
+        if had_toml is not None:
+            # Already converted on an earlier run, so nothing above asked.
+            # Files may still be sitting there from a `no`, so the offer is
+            # made once more rather than never again.
+            st.offer_to_clear_legacy(folder, ask, had_toml)
+
     def setup_needed(self, folder):
         """Required pieces this folder has not got, or [] if it is settled.
 
@@ -494,7 +566,7 @@ class Window(QMainWindow):
         window in the way -- and so nothing has to open a modal box to find
         out whether one is warranted.
         """
-        if st.read_settings(folder) is not None:
+        if st.folder_settled(folder):
             return []                 # settled on an earlier run
         if not st.default_sources(st.REQUIRED_ASSETS):
             return []                 # nothing to lend, so nothing to offer
@@ -637,8 +709,13 @@ class Window(QMainWindow):
                 box.setInformativeText(recent[0])
             if question.subjects:
                 box.setDetailedText('\n'.join(question.subjects[:20]))
-            yes = box.addButton('Yes', QMessageBox.YesRole)
-            no = box.addButton('No', QMessageBox.NoRole)
+            # A destructive question says what it does on the button. "Yes"
+            # beside a warning icon is the same click as "Yes" beside a
+            # question mark, and one of them deletes the author's files.
+            yes = box.addButton('Delete' if question.destructive else 'Yes',
+                                QMessageBox.YesRole)
+            no = box.addButton('Keep' if question.destructive else 'No',
+                               QMessageBox.NoRole)
             box.setDefaultButton(yes if question.default else no)
             box.exec()
             return box.clickedButton() is yes
@@ -685,7 +762,35 @@ class Window(QMainWindow):
         rows = []
         for name in names:
             path = os.path.join(folder, name)
-            if not os.path.isfile(path) or _hidden(name):
+            if _hidden(name):
+                continue
+            if os.path.isdir(path):
+                # A gfx0/gfx1 folder is packed -- Coral Reef ships 450 sprite
+                # overrides in one -- and listing it file by file would bury
+                # the terrain's own art under hundreds of rows nobody edits
+                # here. So it gets a single row saying it is in, with what it
+                # holds and what that weighs. Any other subfolder is not
+                # packed and is left out, as it always was.
+                if name.lower() not in st.SPRITE_SUBFOLDERS:
+                    continue
+                sprites = total = 0
+                for sub in os.listdir(path):
+                    subpath = os.path.join(path, sub)
+                    if not os.path.isfile(subpath) or _hidden(sub):
+                        continue
+                    total += os.path.getsize(subpath)
+                    if sub.lower().endswith('.spr'):
+                        sprites += 1
+                item = _Row([f'{name}/  ({sprites} sprite override'
+                             f'{"" if sprites == 1 else "s"}, packed)',
+                             _human(total), ''])
+                item.setData(1, Qt.UserRole, total)
+                item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+                item.setToolTip(0, f'{path}\nPacked into the archive as '
+                                   f'{name}\\<name>.spr entries.')
+                self._files.addTopLevelItem(item)
+                continue
+            if not os.path.isfile(path):
                 continue
             size = os.path.getsize(path)
             item = _Row([name, _human(size), ''])
@@ -700,7 +805,8 @@ class Window(QMainWindow):
         count = self._objects.load(folder)
         self._tabs.setTabText(1, f'Objects ({count})' if count else 'Objects')
         for problem in self._objects.problems:
-            self._say('err', f'  note: {st.SETTINGS_NAME}: {problem}')
+            self._say('err', f'  note: {settings_toml.SETTINGS_TOML_NAME}: '
+                             f'{problem}')
         self._show_palette(os.path.join(folder, st.PALETTE_NAME))
         self._count_colours(rows, token)
 
@@ -764,7 +870,8 @@ class Window(QMainWindow):
             # chose to change.
             QMessageBox.warning(
                 self, 'Not saving',
-                f'{st.SETTINGS_NAME} could not be read, so the table is not '
+                f'{settings_toml.SETTINGS_TOML_NAME} could not be read, so '
+                f'the table is not '
                 f'showing what is in it:\n\n'
                 + '\n'.join(self._objects.problems[:4])
                 + '\n\nFix the file first; saving now would overwrite it.')
@@ -782,7 +889,8 @@ class Window(QMainWindow):
             answer = QMessageBox.question(
                 self, 'Unsaved object settings',
                 f'The object table has changes that are not in '
-                f'{st.SETTINGS_NAME} yet.\n\nSave them before packing?',
+                f'{settings_toml.SETTINGS_TOML_NAME} yet.\n\nSave them before '
+                f'packing?',
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
             if answer == QMessageBox.Cancel:
                 return

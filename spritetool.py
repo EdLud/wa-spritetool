@@ -26,6 +26,11 @@ try:
 except ImportError:  # optional; only makes fitting PNG colours quicker
     np = None
 
+# The terrain settings file, settings.spritetool.toml. A module of its own
+# because the GUI reads and writes it too, and because it stands alone: it
+# imports nothing from here, so there is no cycle to think about.
+import settings_toml
+
 __version__ = "0.3.0"
 
 # Sanity bound on decoded sprite dimensions. Level themes ship full-screen
@@ -2113,31 +2118,10 @@ INF_FIELDS = (
 # format holds -- collide = 1 enables collision, as the guide has it, rather
 # than reading as its own opposite.
 PALETTE_NAME = 'palette.png'
+# The SpriteEditor-era combined settings file. Read-only now, and only to be
+# migrated into settings.spritetool.toml; the tool never writes one again.
 SETTINGS_NAME = 'object_settings.txt'
 SETTINGS_KEYS = ('probability', 'front', 'soil', 'collide', 'nostack', 'where')
-# Written at the top of the file, so what each setting does is where it is
-# needed rather than in a document somewhere else. Wording follows the guide.
-SETTINGS_HEADER = """\
-// How each object is placed. One block an object: its picture's name, then
-// its settings. Blank lines are ignored and these // lines are comments.
-// The order of the blocks means nothing -- the terrain is packed
-// alphabetically whatever order they are written in.
-//
-// probability  1 to 10. Affects the chance of an object being placed, and is
-//              relative to the values of other objects. Smaller objects, or
-//              ones with a narrow base, typically have more places to appear.
-// front        Whether the object is in front or behind the terrain.
-//              0 = behind, 1 = in front
-// soil         Whether the soil texture appears when the object is
-//              destroyed. 0 = none, 1 = soil
-// collide      Enables or disables collision. 1 = enabled, 0 = disabled
-// nostack      Whether other objects can be placed onto this one.
-//              0 = yes, 1 = no
-// where        Where the object is placed. 2 = ceiling, 3 = floor, 0 or 1 =
-//              the side of the terrain, saying which side of the object is
-//              fixed to it, left (0) or right (1)
-
-"""
 
 
 def parse_inf(text: str) -> Optional[List[int]]:
@@ -2213,16 +2197,6 @@ def parse_settings(text: str) -> Tuple[Dict[str, List[int]], List[str]]:
         except ValueError:
             problems.append(f'line {n}: "{value.strip()}" is not a number')
     return settings, problems
-
-
-def format_settings(entries: Sequence[Tuple[str, Sequence[int]]]) -> str:
-    """Write object_settings.txt, a block an object, in the order given."""
-    out: List[str] = [SETTINGS_HEADER.rstrip('\n'), '']
-    for name, values in entries:
-        out.append(name)
-        out += [f'{k} = {v}' for k, v in zip(SETTINGS_KEYS, values)]
-        out.append('')
-    return '\n'.join(out)
 
 
 def format_inf(values: Sequence[int]) -> bytes:
@@ -2493,8 +2467,15 @@ def cli_asker(answers: Mapping[str, bool] = {}) -> Asker:
         if given is not None:
             print(f'{question.prompt} [{"y" if given else "n"}, not asking]')
             return given
+        if not sys.stdin or not sys.stdin.isatty():
+            # No terminal: take the safe answer rather than block. A pipe that
+            # nobody writes to never reaches EOF, so asking it would wait for
+            # an answer that is not coming -- which is a hung build, not a
+            # question. --yes=/--no= is how a script answers.
+            print(f'{question.prompt} '
+                  f'[{"y" if question.default else "n"}, not a terminal]')
+            return question.default
         try:
-            # Piped input counts: a terminal is not the only thing that answers.
             return input(f'{question.prompt} [y/N] ').strip().lower().startswith('y')
         except (EOFError, KeyboardInterrupt):
             # Nothing to read from, so take the safe answer and say so.
@@ -2549,17 +2530,35 @@ def _copy_defaults(pieces: Dict[str, str], source_dir: str) -> List[str]:
     return copied
 
 
+def object_stem(name: str) -> str:
+    """The object stem a settings key names, lowercased.
+
+    object_settings.txt was keyed by the picture's filename and
+    scan_terrain hands back bare stems, so the two are brought together
+    through split_picture, which knows the .img/.spr infix SpriteEditor
+    used. Matching on the raw name instead silently misses every object.
+    Shared with the GUI, whose table reads the same file.
+    """
+    split = split_picture(name)
+    return (split[0] if split else name).lower()
+
+
 def _settle_object_settings(folder: str, objects: Sequence[str],
-                            ask: Asker
+                            ask: Asker,
+                            toml: Optional[settings_toml.TerrainSettings] = None
                             ) -> Tuple[Dict[str, List[int]], str]:
     """Bring a terrain's object settings together into one file.
 
     Returns the settings by object stem and a reason to stop when there is
-    one. The per-object .inf and .txt files the format itself uses are still
-    read and still written into the archive; this is only how the author keeps
-    them, and one file for the terrain beats one beside every picture.
+    one. The per-object .inf entries the format itself uses are still written
+    into the archive; this is only how the author keeps them, and one file for
+    the terrain beats one beside every picture.
+
+    That file is settings.spritetool.toml. The SpriteEditor-era formats --
+    object_settings.txt and a loose .inf/.txt beside an object -- are read
+    only to be migrated, and only ever with the author's say-so: nothing is
+    deleted, and a declined conversion still packs, writing nothing back.
     """
-    path = os.path.join(folder, SETTINGS_NAME)
     present = {f.lower(): f for f in os.listdir(folder)
                if os.path.isfile(os.path.join(folder, f))}
 
@@ -2574,19 +2573,37 @@ def _settle_object_settings(folder: str, objects: Sequence[str],
                     return real
         return None
 
-    settings: Dict[str, List[int]] = {}
-    if os.path.exists(path):
-        with open(path, 'r', encoding='latin-1') as fh:
+    if toml is not None:
+        # The TOML is the source of truth. A loose file for an object it
+        # already covers is two answers to one question, and there is no
+        # telling which was meant.
+        settings = {stem.lower(): list(values)
+                    for stem, values in toml.objects.items()}
+        clash = [o for o in objects
+                 if o.lower() in settings and loose_for(o.lower())]
+        if clash:
+            files = ', '.join(loose_for(o.lower()) for o in clash[:3])
+            return {}, (f'{files} set what {settings_toml.SETTINGS_TOML_NAME} '
+                        f'already sets for the same object(s). Delete one or '
+                        f'the other -- there is no saying which you meant')
+        for stem in objects:
+            settings.setdefault(stem.lower(), list(DEFAULT_INF))
+        return settings, ''
+
+    # No TOML yet: read the legacy sources, and offer to keep them there.
+    settings = {}
+    legacy: List[str] = []
+    combined = os.path.join(folder, SETTINGS_NAME)
+    if os.path.exists(combined):
+        with open(combined, 'r', encoding='latin-1') as fh:
             by_picture, problems = parse_settings(fh.read())
         if problems:
             return {}, (f'{SETTINGS_NAME} does not read: '
                         + '; '.join(problems[:3]))
-        # Keyed by picture name in the file, by stem here.
         for picture, values in by_picture.items():
-            split = split_picture(picture)
-            settings[(split[0] if split else picture).lower()] = values
-        # A loose file for an object the settings already cover is two answers
-        # to one question, and there is no telling which was meant.
+            settings[object_stem(picture)] = values
+        legacy.append(SETTINGS_NAME)
+        # The same clash rule, against the combined legacy file.
         clash = [o for o in objects
                  if o.lower() in settings and loose_for(o.lower())]
         if clash:
@@ -2595,41 +2612,44 @@ def _settle_object_settings(folder: str, objects: Sequence[str],
                         f'the same object(s). Delete one or the other -- there '
                         f'is no saying which you meant')
 
-    missing = [o for o in objects if o.lower() not in settings]
-    loose = {o: loose_for(o.lower()) for o in missing}
-    to_take = {o: f for o, f in loose.items() if f}
-    if to_take:
-        shown = ', '.join(sorted(to_take.values())[:4])
-        print(f'{len(to_take)} object(s) keep their settings in a file of '
-              f'their own: {shown}'
-              + (f' and {len(to_take) - 4} more' if len(to_take) > 4 else ''))
-        if not ask(Question(
-                'settings.consolidate',
-                f'Move them into {SETTINGS_NAME} and delete them?',
-                destructive=True,
-                subjects=tuple(sorted(to_take.values())))):
-            return {}, (f'a terrain keeps its object settings in '
-                        f'{SETTINGS_NAME}; nothing was changed')
-        for stem, real in to_take.items():
-            with open(os.path.join(folder, real), 'r', encoding='latin-1') as fh:
-                settings[stem.lower()] = parse_inf(fh.read())
-            os.remove(os.path.join(folder, real))
-            print(f'  took {real} into {SETTINGS_NAME}', file=sys.stderr)
+    for stem in objects:
+        low = stem.lower()
+        if low in settings:
+            continue
+        real = loose_for(low)
+        if real is None:
+            continue
+        with open(os.path.join(folder, real), 'r', encoding='latin-1') as fh:
+            values = parse_inf(fh.read())
+        if values is not None:
+            settings[low] = values
+            legacy.append(real)
 
     for stem in objects:
         settings.setdefault(stem.lower(), list(DEFAULT_INF))
 
-    # Alphabetical, whatever order the file was in: the archive is packed that
-    # way, and the two agreeing is one less thing to wonder about.
-    picture_of = {}
-    for f in os.listdir(folder):
-        split = split_picture(f)
-        if split:
-            picture_of.setdefault(split[0].lower(), f)
-    rows = [(picture_of.get(s.lower(), s), settings[s.lower()])
-            for s in sorted(objects, key=str.lower)]
-    with open(path, 'w', encoding='latin-1', newline='\n') as fh:
-        fh.write(format_settings(rows))
+    if not legacy:
+        # Nothing to migrate: the folder simply has no settings yet. The
+        # setup confirmation writes the TOML, so there is nothing to do here.
+        return settings, ''
+
+    shown = ', '.join(sorted(legacy)[:4])
+    print(f'this folder keeps its object settings in the SpriteEditor-era '
+          f'format: {shown}'
+          + (f' and {len(legacy) - 4} more' if len(legacy) > 4 else ''))
+    if ask(Question(
+            'settings.convert_toml',
+            f'Transfer settings in these files to {settings_toml.SETTINGS_TOML_NAME}? ',
+            subjects=tuple(sorted(legacy)))):
+        settled = settings_toml.TerrainSettings(
+            objects={stem: values for stem, values in settings.items()},
+            sprites=_spd_geometry(folder))
+        path = settings_toml.save(folder, settled)
+        print(f'  wrote {os.path.basename(path)}', file=sys.stderr)
+        # Written first, then offered: the settings are safely in the TOML
+        # before anything is deleted, so saying yes cannot lose them.
+        offer_to_clear_legacy(folder, ask, settled)
+    # On no the legacy files are read-only: pack from them, write nothing.
     return settings, ''
 
 
@@ -2639,10 +2659,12 @@ def _today() -> str:
 
 
 def read_settings(folder: str) -> Optional[Dict[str, str]]:
-    """A build folder's settings, or None when it has never been packed.
+    """Read the legacy settings.spritetool marker, or None when there is none.
 
-    None is the thing worth knowing: it means the folder is new, and that a
-    missing piece has not been declined yet but simply never offered.
+    Read-only, and only for migration: the marker's `created`/`borrowed` keys
+    fold into the [spritetool] table of settings.spritetool.toml, which is
+    what is written now. None still means the folder is new -- a missing piece
+    has not been declined yet but simply never offered.
     """
     path = os.path.join(folder, SETTINGS_FILE)
     if not os.path.exists(path):
@@ -2658,15 +2680,217 @@ def read_settings(folder: str) -> Optional[Dict[str, str]]:
     return out
 
 
-def write_settings(folder: str, values: Dict[str, str]) -> None:
-    """Mark the folder as packed once, and keep what was settled."""
-    lines = ['// Written by spritetool the first time this folder was packed.',
-             '']
-    for key in sorted(values):
-        lines.append(f'{key} = {values[key]}')
-    with open(os.path.join(folder, SETTINGS_FILE), 'w',
-              encoding='latin-1') as fh:
-        fh.write('\n'.join(lines) + '\n')
+def folder_settled(folder: str) -> bool:
+    """Whether a folder has been set up as a spritetool terrain.
+
+    The marker is the TOML's [spritetool] table specifically, not the file: a
+    settings conversion written mid-pack carries only [object.*] tables and
+    says nothing about setup yet. The legacy settings.spritetool file counts
+    too, so a folder set up before the move is not asked again.
+    """
+    settled = settings_toml.load(folder)
+    if settled is not None and settled.tool:
+        return True
+    return read_settings(folder) is not None
+
+
+def _spd_geometry(folder: str) -> Dict[str, Dict[str, int]]:
+    """Every `.spr.spd` sidecar in `folder`, keyed as the packer looks it up.
+
+    Read during a migration so the geometry lands in the TOML with the object
+    settings. Without this a converted folder still keeps its frame counts in
+    the SpriteEditor sidecars alone -- which cannot then be cleared away, and
+    a sheet says nothing about its own frame count, so losing them silently
+    collapses every sprite into one frame.
+
+    Only the five fields the TOML models, and only when the sidecar gives a
+    frame count: a file that parses to nothing is left for the packer to
+    complain about in its own words.
+    """
+    out: Dict[str, Dict[str, int]] = {}
+    try:
+        entries = os.listdir(folder)
+    except OSError:
+        return out
+    for name in entries:
+        if not name.lower().endswith('.spr.spd'):
+            continue
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r', encoding='latin-1') as fh:
+                meta = read_spd(fh.read())
+        except OSError:
+            continue
+        if 'frames' not in meta:
+            continue
+        # Key on the .spr stem, matching the lookup in the packer: a
+        # terrain's own sprite is keyed by its bare stem.
+        stem = name[:-len('.spd')]
+        key = stem[:-4] if stem.lower().endswith('.spr') else stem
+        kept = {k: meta[k] for k in settings_toml.SPRITE_KEYS if k in meta}
+        if kept:
+            out[key] = kept
+    return out
+
+
+def absorbed_legacy_files(folder: str,
+                          toml: Optional[settings_toml.TerrainSettings] = None
+                          ) -> List[str]:
+    """The SpriteEditor-era files whose contents the TOML now holds.
+
+    Only files that are wholly answered by settings.spritetool.toml: the
+    per-object `.inf`/`.txt`, the combined object_settings.txt, the `.spr.spd`
+    sidecars for sprites the TOML carries geometry for, and the old
+    settings.spritetool marker. Named so they can be offered for deletion
+    once, at setup, rather than sitting in the folder for ever -- the tool
+    stops writing them, so what is left is clutter the author has to look
+    past, and a stale .inf beside a TOML that covers the same object is a
+    clash the packer refuses outright.
+
+    Deliberately NOT included: index.txt and <name>.dir.txt. Both are read
+    into the model, but index.txt is a real archive entry and a listing is
+    the author's own record of entry order -- deleting either changes what a
+    later pack does, so they are not this offer's business.
+
+    Returns real filenames as they sit on disk, sorted. Nothing is deleted
+    here; the caller asks.
+    """
+    if toml is None:
+        toml = settings_toml.load(folder)
+    if toml is None:
+        return []
+    try:
+        present = {f.lower(): f for f in os.listdir(folder)
+                   if os.path.isfile(os.path.join(folder, f))}
+    except OSError:
+        return []
+
+    found: List[str] = []
+    for stem in toml.objects:
+        low = stem.lower()
+        for cand in (f'{low}.inf', f'{low}.txt'):
+            real = present.get(cand)
+            if real is None:
+                continue
+            # Only a file that actually parses as settings: a .txt beside an
+            # object may be the author's notes, and notes are not ours.
+            with open(os.path.join(folder, real), 'r',
+                      encoding='latin-1') as fh:
+                if parse_inf(fh.read()) is not None:
+                    found.append(real)
+    for name in toml.sprites:
+        # The sidecar sits beside the sheet under the entry's own name, so
+        # the `debris` the TOML keys on is `debris.spr.spd` on disk. The
+        # bare `.spd` spelling is checked too, for a folder that used it.
+        low = name.lower()
+        for cand in (f'{low}.spr.spd', f'{low}.spd'):
+            real = present.get(cand)
+            if real is not None:
+                found.append(real)
+                break
+    for plain in (SETTINGS_NAME, SETTINGS_FILE):
+        real = present.get(plain.lower())
+        if real is not None:
+            found.append(real)
+    return sorted(set(found))
+
+
+def offer_to_clear_legacy(folder: str, ask: Asker,
+                          toml: Optional[settings_toml.TerrainSettings] = None
+                          ) -> List[str]:
+    """Ask once whether the absorbed legacy files should go, and delete them.
+
+    Returns what was deleted. Asked only when there is something to ask
+    about, and answered `no` by default: these are the author's files, and
+    the tool reads them fine either way. Their contents are in the TOML
+    before this is called, so nothing is lost by saying yes and nothing
+    breaks by saying no.
+    """
+    stale = absorbed_legacy_files(folder, toml)
+    if not stale:
+        return []
+    shown = ', '.join(stale[:4]) + (f' and {len(stale) - 4} more'
+                                    if len(stale) > 4 else '')
+    print(f'{len(stale)} SpriteEditor-era file(s) now say nothing that '
+          f'{settings_toml.SETTINGS_TOML_NAME} does not: {shown}')
+    if not ask(Question(
+            'settings.clear_legacy',
+            f'Permanently delete these {len(stale)} file(s) from the folder? '
+            f'Their settings are in {settings_toml.SETTINGS_TOML_NAME} '
+            f'already, so nothing is lost -- but this erases the originals, '
+            f'and there is no undo.',
+            destructive=True, subjects=tuple(stale))):
+        return []
+    gone: List[str] = []
+    for name in stale:
+        try:
+            os.remove(os.path.join(folder, name))
+            gone.append(name)
+        except OSError as exc:
+            print(f'  note: could not delete {name}: {exc}', file=sys.stderr)
+    if gone:
+        print(f'  deleted {len(gone)} file(s)', file=sys.stderr)
+    return gone
+
+
+def _mark_settled(folder: str, borrowed: Sequence[str],
+                  toml: Optional[settings_toml.TerrainSettings] = None) -> str:
+    """Write the [spritetool] table that says the folder was set up.
+
+    Written whatever was decided, including nothing borrowed: the point is
+    that the questions were asked once, not that they were answered yes.
+    `created` is only set the first time -- a later run folds the legacy
+    marker in but keeps the date it first saw.
+
+    The object and sprite tables already on disk win over the `toml` passed
+    in: a settings conversion earlier in the same pack may have written them,
+    and they are not this mark's to lose.
+    """
+    on_disk = settings_toml.load(folder)
+    if toml is None or (on_disk is not None
+                        and (on_disk.objects or on_disk.sprites)):
+        # Keep the tables already written; only the bookkeeping is added.
+        base = on_disk if on_disk is not None else toml
+        if base is None:
+            base = settings_toml.TerrainSettings()
+        if toml is not None:
+            base.tool.update(toml.tool)
+        toml = base
+    legacy = read_settings(folder)
+    if 'created' not in toml.tool:
+        toml.tool['created'] = (legacy or {}).get('created') or _today()
+    was = toml.tool.get('borrowed')
+    lent = sorted(set(borrowed) | (set(was) if isinstance(was, list) else set()))
+    if lent:
+        toml.tool['borrowed'] = lent
+    return settings_toml.save(folder, toml)
+
+
+def _legacy_borrowed(folder: str) -> List[str]:
+    """What the legacy settings.spritetool marker recorded as borrowed.
+
+    The marker spelled them 'bridge,debris' and wrote 'nothing' when none
+    was taken. Only read so a folder set up before the TOML keeps lending
+    the same pieces -- and keeps them out of the palette budget.
+    """
+    was = (read_settings(folder) or {}).get('borrowed', '')
+    if not was or was == 'nothing':
+        return []
+    return [n for n in was.split(',') if n]
+
+
+def _borrowed_names(folder: str,
+                    toml: Optional[settings_toml.TerrainSettings],
+                    legacy: Sequence[str]) -> List[str]:
+    """The entry names a folder borrowed, from whichever marker recorded them."""
+    if toml is not None:
+        was = toml.tool.get('borrowed')
+        if isinstance(was, list):
+            return [n for n in was if isinstance(n, str)]
+        return []
+    return list(legacy)
 
 
 def _has_icon(source_dir: str) -> bool:
@@ -3038,26 +3262,27 @@ def _write_terrain_folder(source_dir: str, out_dir: str,
     return said
 
 
-BUILD_DIR_NAME = 'build'
+def describe_terrain_folder(folder: str) -> Tuple[int, List[str]]:
+    """What a would-be terrain folder holds: (object count, core assets found).
 
-
-def _terrain_needs(folder: str) -> str:
-    """Whether this folder is meant to be packed as a terrain; '' when it is.
-
-    The test is its name. Everything a terrain needs can now be stood in for,
-    so there is no asset whose absence proves the folder is not one -- and
-    running pack-terrain over some directory of pictures by accident is worth
-    making hard. A folder called build says the author meant it.
-
-    That is all the safety it has to carry. A build folder holding hundreds of
-    unrelated pictures still fails, further along, on the 32 objects a terrain
-    may have.
+    This is what the setup confirmation reports. It used to be a refusal
+    instead: the folder had to be called build, its name the only thing that
+    said the author meant it. That gate is gone -- any folder may be set up as
+    a terrain -- so what remains is showing what is there before asking. The
+    one safeguard left is the caller's: a folder with no pictures at all gets
+    a plain "nothing here to pack" rather than a prompt.
     """
-    if os.path.basename(folder.rstrip(os.sep)).lower() == BUILD_DIR_NAME:
-        return ''
-    return (f'pack-terrain builds a folder called {BUILD_DIR_NAME}, and this '
-            f'one is called {os.path.basename(folder.rstrip(os.sep))!r}. '
-            f'Rename it, or use `pack` to build a .dir of anything else')
+    _names, objects, _notes = scan_terrain(folder)
+    present = {f.lower() for f in os.listdir(folder)
+               if os.path.isfile(os.path.join(folder, f))}
+    found = []
+    for entry in CORE_ENTRIES:
+        stem = entry[:-4]
+        if any(f'{stem}{suffix}' in present or f'{entry}{suffix}' in present
+               for suffix in ('.png', '.bmp')) \
+                or entry in present:
+            found.append(stem)
+    return len(objects), found
 
 
 def scan_archive(folder: str, subfolders: Optional[Sequence[str]] = None
@@ -3123,18 +3348,33 @@ def scan_archive(folder: str, subfolders: Optional[Sequence[str]] = None
     return entries, notes
 
 
-def scan_terrain(folder: str) -> Tuple[List[str], List[str], List[str]]:
+def scan_terrain(folder: str,
+                 toml_sprites: Optional[Sequence[str]] = None,
+                 toml_objects: Optional[Sequence[str]] = None
+                 ) -> Tuple[List[str], List[str], List[str]]:
     """Work out a terrain's entry list from the files in a folder.
 
     Returns (entries, objects, notes). An object is a picture that is not one
     of the fixed core names. Its parameters are looked for beside it -- a .inf
     or a .txt that reads as one -- and defaulted when absent, so art alone is
     enough to build with.
+
+    `toml_sprites` is the set of sprite names settings.spritetool.toml holds
+    geometry for. A sprite override normally needs a .spd beside it to be
+    buildable; a TOML entry stands in for it, which is what an unpack-terrain
+    folder has instead of sidecars.
+
+    `toml_objects` is the set of object stems the same file holds parameters
+    for. Only the "these took the defaults" note reads it: once the settings
+    live in the TOML there is no .inf beside the art, and saying they were
+    defaulted would be false.
     """
     notes: List[str] = []
+    settled_objects = {o.lower() for o in (toml_objects or ())}
     present = {f.lower(): f for f in os.listdir(folder)
                if os.path.isfile(os.path.join(folder, f))}
     core = {c.lower() for c in CORE_ENTRIES}
+    toml_keys = {s.lower() for s in toml_sprites} if toml_sprites else set()
 
     def parameters_for(stem: str) -> Optional[str]:
         for cand in (f'{stem}.inf', f'{stem}.txt'):
@@ -3169,12 +3409,12 @@ def scan_terrain(folder: str) -> Tuple[List[str], List[str], List[str]]:
             continue                # already have it under another extension
         seen.add(stem)
         objects.append(stem)
-        if parameters_for(stem) is None:
+        if parameters_for(stem) is None and stem.lower() not in settled_objects:
             defaulted.append(stem)
     if defaulted:
         shown = ', '.join(sorted(defaulted)[:4])
-        notes.append(f'{len(defaulted)} object(s) have no .inf or .txt beside '
-                     f'them and take the default parameters '
+        notes.append(f'{len(defaulted)} object(s) have no settings of their '
+                     f'own and take the default parameters '
                      f'{" ".join(str(v) for v in DEFAULT_INF)}: {shown}'
                      + (f' and {len(defaulted) - 4} more'
                         if len(defaulted) > 4 else ''))
@@ -3224,7 +3464,8 @@ def scan_terrain(folder: str) -> Tuple[List[str], List[str], List[str]]:
         skipped = [n for n in found
                    if n.lower().endswith('.spr')
                    and not os.path.exists(os.path.join(subdir, n + '.spd'))
-                   and not os.path.exists(os.path.join(subdir, n))]
+                   and not os.path.exists(os.path.join(subdir, n))
+                   and f'{sub}\\{n[:-4]}'.lower() not in toml_keys]
         if skipped:
             notes.append(f'{sub}: {len(skipped)} sprite(s) have neither a .spd '
                          f'nor a built .spr and cannot be rebuilt: '
@@ -3346,12 +3587,13 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
                 refuse.append(f'index.txt names {obj!r} but {obj}.inf is not in '
                               f'the archive')
 
-    # A back.spr that draws nothing. The game composites the background when
-    # a landscape is drawn, and one with no colours in it gave RenderContext__
-    # DrawLandscape something it read as a pointer and died on. No shipped
-    # terrain has an empty one -- the sparsest fills its 640x160 in a single
-    # colour -- and a terrain is better off with no back.spr at all, which 24
-    # of them do.
+    # A back.spr with nothing in it. Every pixel is the transparent index, so
+    # the entry draws nothing wherever it is composited -- it is the file
+    # equivalent of not shipping one, and there is no telling which was meant.
+    # Either answer is fine: a terrain does not need a back.spr at all (of the
+    # 142 installed here, 27 have none, and none of the 115 that do is empty),
+    # and one with art in it is an ordinary backdrop. So the message offers
+    # both rather than picking for the author.
     back = lower.get('back.spr')
     if back is not None:
         sprite = SpriteFile(entries[back])
@@ -3359,10 +3601,10 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
             sheet = sprite.render_sheet()
             if sheet is not None and not any(sheet):
                 refuse.append(
-                    f'{back} draws nothing: every pixel is transparent. The '
-                    f'game crashes compositing an empty background. Give it '
-                    f'something to draw, or leave it out -- a terrain does '
-                    f'not need one.')
+                    f'{back} is empty: every pixel is the transparent index, '
+                    f'so it would draw nothing. Either paint the backdrop you '
+                    f'meant into it, or take the file out of the folder '
+                    )
     # The two rearmost layers hold a single frame; the two in front of them
     # animate. back.spr is loaded straight into video memory as a plain image
     # and its loader rejects an animation before it reads a pixel, and _back
@@ -3724,12 +3966,17 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
                 shared_palette: Optional[List[Tuple[int, int, int]]] = None,
                 override: Optional[str] = None,
                 force_palette: bool = True,
+                sprite_meta: Optional[Dict[str, int]] = None,
                 notes: Optional[List[str]] = None
                 ) -> Optional[Tuple[bytes, bool]]:
     """Produce the bytes for one archive entry.
 
     `base` is the path the listing points at, without any added extension.
     Returns (payload, was_encoded) or None when no source file exists.
+
+    `sprite_meta` is the sprite's geometry from settings.spritetool.toml when
+    the folder has one -- frames/width/height/framerate/flags. It takes
+    priority over the .spr.spd sidecar, which is then only a legacy fallback.
 
     Anything worth saying is appended to `notes` rather than printed. This runs
     in a worker process, where a print goes to a stderr nobody is reading and
@@ -3906,25 +4153,34 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
         return encode_image(width, height, remapped, palette,
                             compress=compress_img), True
 
-    # A borrowed sprite keeps its .spd beside the art it came with.
-    spd_base = (source_path[:-4] if override
-                else base) if source_path else base
-    spd_path = next((p for p in (spd_base + '.spd', base + '.spd',
-                                 base[:-4] + '.spd')
-                     if os.path.exists(p)), base + '.spd')
-    if not os.path.exists(spd_path):
-        # The frame count cannot be recovered from the sheet -- it is one tall
-        # image either way -- so without the .spd every frame collapses into
-        # one cell and the sprite is silently wrong.
-        raise ValueError(f'no {os.path.basename(spd_path)}; a sprite needs one '
-                         f'for its frame count and cell size')
-    with open(spd_path, 'r', encoding='latin-1') as fh:
-        meta = read_spd(fh.read())
+    # The sprite's geometry comes from settings.spritetool.toml when the
+    # folder has one; the .spr.spd sidecar is the legacy fallback. Either way
+    # the sheet is validated against it below -- a frame count that does not
+    # divide the sheet is wrong whichever file said it.
+    if sprite_meta is not None:
+        meta = sprite_meta
+        spd_name = settings_toml.SETTINGS_TOML_NAME
+    else:
+        # A borrowed sprite keeps its .spd beside the art it came with.
+        spd_base = (source_path[:-4] if override
+                    else base) if source_path else base
+        spd_path = next((p for p in (spd_base + '.spd', base + '.spd',
+                                     base[:-4] + '.spd')
+                         if os.path.exists(p)), base + '.spd')
+        if not os.path.exists(spd_path):
+            # The frame count cannot be recovered from the sheet -- it is one
+            # tall image either way -- so without the .spd every frame
+            # collapses into one cell and the sprite is silently wrong.
+            raise ValueError(f'no {os.path.basename(spd_path)}; a sprite needs '
+                             f'one for its frame count and cell size')
+        with open(spd_path, 'r', encoding='latin-1') as fh:
+            meta = read_spd(fh.read())
+        spd_name = os.path.basename(spd_path)
     frames = meta.get('frames', 1)
     cell_w = meta.get('width', width)
     cell_h = meta.get('height', height // max(frames, 1))
     if cell_h * frames != height or cell_w != width:
-        raise ValueError(f'{os.path.basename(spd_path)} says {frames} frames of '
+        raise ValueError(f'{spd_name} says {frames} frames of '
                          f'{cell_w}x{cell_h}, which needs a {cell_w}x'
                          f'{cell_h * frames} sheet; the BMP is {width}x{height}')
     # Every sprite is compressed, this one included. back.spr and debris.spr
@@ -3971,6 +4227,119 @@ def _pack_entry(base: str, name: str, recreate: bool, compress_spr: bool,
     return blob, True
 
 
+def unpack_terrain(dir_file: str, out_dir: str) -> int:
+    """Take a Level.dir apart into a spritetool-owned build folder.
+
+    The art is decoded the way `decompress` decodes it -- each image to a BMP,
+    each sprite to a sheet BMP -- but the settings go to
+    settings.spritetool.toml rather than the SpriteEditor-era files: every
+    object's placement from the archive's .inf entries, every terrain sprite's
+    geometry from its .spr record. index.txt is read for the object set and
+    order, not copied out. No Level.dir.txt, no .spr.spd, no
+    object_settings.txt is written: the folder packs straight back with
+    pack-terrain, which rebuilds all of that from the scan and the TOML.
+
+    Returns the number of entries decoded.
+    """
+    reader = DirectoryReader(dir_file)
+    if not reader.read():
+        raise SpritetoolError(f"could not read {dir_file}")
+
+    os.makedirs(out_dir, exist_ok=True)
+    settings = settings_toml.TerrainSettings()
+    entry_order = sorted(reader.files, key=lambda n: reader.files[n][0])
+    core = {c.lower() for c in CORE_ENTRIES}
+    count = 0
+
+    with open(dir_file, 'rb') as fh:
+        for filename in entry_order:
+            data = reader.extract_file(fh, filename)
+            relname = filename.replace('\\', os.sep)
+            low = filename.lower()
+            dest = os.path.join(out_dir, relname)
+            os.makedirs(os.path.dirname(dest) or out_dir, exist_ok=True)
+
+            if low == 'index.txt':
+                # The object set and order. Read, not copied: pack-terrain
+                # regenerates it from the scan, so keeping a file of it
+                # would only be a second opinion to drift from the first.
+                for line in data.decode('latin-1').splitlines():
+                    stem = line.strip()
+                    if stem:
+                        settings.objects.setdefault(
+                            stem.lower(), list(DEFAULT_INF))
+                continue
+
+            if low.endswith('.inf') and '\\' not in filename:
+                # An object's placement, into the TOML rather than a file.
+                values = parse_inf(data.decode('latin-1'))
+                if values is not None:
+                    settings.objects[filename[:-4].lower()] = values
+                continue
+
+            if not data or len(data) < 4:
+                if data:
+                    with open(dest, 'wb') as out:
+                        out.write(data)
+                continue
+
+            kind = data[0:4]
+            if kind == ImageFile.SIGNATURE:
+                image = ImageFile(data)
+                if not image.parse():
+                    raise SpritetoolError(f"could not decode image {filename}")
+                bmp = SpriteFile._create_bmp(image.pixels, image.rgb_palette(),
+                                             image.width, image.height)
+                if bmp is None:
+                    raise SpritetoolError(f"could not draw image {filename}")
+                with open(dest + '.bmp', 'wb') as out:
+                    out.write(bmp)
+                count += 1
+                continue
+
+            if kind != SpriteFile.SIGNATURE:
+                # Anything else rides along as data, as decompress does.
+                with open(dest, 'wb') as out:
+                    out.write(data)
+                continue
+
+            sprite = SpriteFile(data)
+            if not sprite.parse():
+                raise SpritetoolError(f"could not decode sprite {filename}")
+            sheet = sprite.render_sheet()
+            if sheet is None:
+                raise SpritetoolError(f"could not render sprite {filename}")
+            bmp = SpriteFile._create_bmp(sheet, sprite.rgb_palette(),
+                                         sprite.width,
+                                         sprite.height * sprite.frames)
+            if bmp is None:
+                raise SpritetoolError(f"could not draw sprite {filename}")
+            with open(dest + '.bmp', 'wb') as out:
+                out.write(bmp)
+            # Geometry into the TOML. The key matches what _plan looks up:
+            # the entry stem for the terrain's own sprites, the folder-
+            # prefixed name for a gfx override.
+            stem = filename[:-4]
+            key = stem if '\\' in stem else stem.split('\\')[-1]
+            settings.sprites[key] = {
+                'frames': sprite.frames,
+                'width': sprite.width,
+                'height': sprite.height,
+                'framerate': sprite.framerate,
+                'flags': sprite.flags,
+            }
+            count += 1
+
+    settings.tool['created'] = _today()
+    settings_toml.save(out_dir, settings)
+
+    # The icon sits beside Level.dir, not in it; bring it along as icon.img.bmp.
+    icon_out = _emit_sibling_icon(dir_file, out_dir)
+    if icon_out:
+        print(f"Wrote {icon_out} from the icon beside the archive")
+    return count
+
+
 def print_help():
     """Print help message"""
     print(f"wa-py-spriteHelper v{__version__}")
@@ -3995,8 +4364,6 @@ def print_help():
     print("                                    --offer-defaults   ask about missing art")
     print("                                                       again on a folder")
     print("                                                       already packed once")
-    print("                                    --no-output-inf    do not write an")
-    print("                                                       object's settings back")
     print("                                    --write-palette    draw the terrain's")
     print("                                                       colours to palette.png")
     print("                                    --no-palette       leave colours as")
@@ -4006,8 +4373,12 @@ def print_help():
     print("                                                       asking")
     print("                                    --yes=KEY          answer a question")
     print("                                    --no=KEY           ahead of time; keys")
-    print("                                                       are settings.")
-    print("                                                       consolidate,")
+    print("                                                       are setup.confirm,")
+    print("                                                       settings.convert_toml,")
+    print("                                                       settings.")
+    print("                                                       convert_listing,")
+    print("                                                       settings.")
+    print("                                                       clear_legacy,")
     print("                                                       defaults.<piece>,")
     print("                                                       palette.repalette")
     print("                                    --read-palette     fit the art to the")
@@ -4016,6 +4387,11 @@ def print_help():
     print("                                                       1 uses only this one")
     print("                                    --no-nested-jobs   do not let a worker")
     print("                                                       start a pool of its own")
+    print("  unpack-terrain <Level.dir> [output_dir]")
+    print("                                    Take a terrain apart into a build")
+    print("                                    folder: the art as BMP, the settings")
+    print("                                    in settings.spritetool.toml. Packs")
+    print("                                    straight back with pack-terrain")
     print("  decompress <dir_file> [output_dir] [--gif]")
     print("                                    Decode sprites to raw pixels, BMP and .spd")
     print("                                    --gif also writes animated GIFs (slow)")
@@ -4132,7 +4508,6 @@ class Options:
     recreate: bool = True
     opaque: bool = False
     force: bool = False
-    output_inf: bool = True
     write_palette: bool = False
     read_palette: bool = False
     no_palette: bool = False
@@ -4164,7 +4539,6 @@ PACK_FLAGS = {
     '--no-recreate': ('recreate', False),
     '--opaque-img': ('opaque', True),
     '--force': ('force', True),
-    '--no-output-inf': ('output_inf', False),
     '--write-palette': ('write_palette', True),
     '--read-palette': ('read_palette', True),
     '--no-palette': ('no_palette', True),
@@ -4255,10 +4629,7 @@ def setup_terrain(folder: str, ask: Asker) -> Tuple[List[str], str]:
     # Marks the folder as asked-about, which is what stops the offer coming
     # back. Written even when nothing was taken: the point is that the
     # questions were put once, not that they were answered yes.
-    write_settings(folder, {
-        'created': _today(),
-        'borrowed': ','.join(sorted(borrowed)) or 'nothing',
-    })
+    _mark_settled(folder, sorted(borrowed))
     return sorted(borrowed), ''
 
 
@@ -4313,7 +4684,6 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
     recreate = options.recreate
     opaque = options.opaque
     force = options.force
-    output_inf = options.output_inf
     write_palette = options.write_palette
     read_palette = options.read_palette
     no_palette = options.no_palette
@@ -4342,25 +4712,83 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
     # listing. Only then is the folder the terrain's own, and only then is
     # writing anything back into it right.
     scanned = False
-    # A terrain's object settings, read from object_settings.txt by the
-    # scan. Empty from a listing, where there is no folder to keep one in.
+    # A terrain's object settings, read from settings.spritetool.toml (or a
+    # legacy source being migrated) by the scan. Empty from a listing, where
+    # there is no folder to keep one in.
     obj_settings: Dict[str, List[int]] = {}
+    # The folder's settings.spritetool.toml, when it has one. Loaded once
+    # here and threaded through to the sprite metadata lookup, so a sprite's
+    # geometry can come from the same file the objects' settings do.
+    toml: Optional[settings_toml.TerrainSettings] = None
+    # The marker a just-confirmed setup will write, kept apart from `toml`
+    # (which is what was on disk) so the object-settings step can still find
+    # legacy files to migrate on the same run.
+    fresh_toml: Optional[settings_toml.TerrainSettings] = None
+    # What the legacy settings.spritetool marker recorded as borrowed, for a
+    # folder set up before the TOML existed. Folded into [spritetool] when
+    # the folder is next marked.
+    legacy_borrowed: List[str] = []
 
     if os.path.isdir(target):
         # Nothing to author: the folder is the input. A Level.dir.txt in
         # it still wins, so a build that has one keeps its exact order.
         source_dir = os.path.abspath(target)
         if terrain:
-            # Before the listing branch, not inside the scanned one. The name
-            # is the only thing that says a folder was meant to be a terrain
-            # -- every asset can be stood in for, and a folder holding one
-            # picture is a legitimate starting point -- so a .dir.txt must not
-            # be a way around it.
-            refuse = _terrain_needs(source_dir)
-            if refuse:
-                raise PackFailed(f"Not packing: {refuse}.")
+            # Before the listing branch, not inside the scanned one. A
+            # .dir.txt must not be a way around setting the folder up.
+            toml = settings_toml.load(source_dir)
+            if toml is not None and toml.problems:
+                raise PackFailed(
+                    f"Not packing {os.path.basename(source_dir)}: "
+                    f"{settings_toml.SETTINGS_TOML_NAME} does not read: "
+                    + '; '.join(toml.problems[:3]))
+            if toml is None:
+                legacy_borrowed = _legacy_borrowed(source_dir)
+            if toml is None and not folder_settled(source_dir):
+                # Not set up yet, by either the TOML or the legacy marker it
+                # folds in. Any folder may be a terrain now -- the name no
+                # longer decides -- so what is asked is a confirmation, with
+                # the folder's contents shown rather than a refusal. The one
+                # safeguard: nothing at all to pack is a plain message, not a
+                # question.
+                count, found = describe_terrain_folder(source_dir)
+                if count == 0 and not found:
+                    raise PackFailed(
+                        f"Not packing {os.path.basename(source_dir)}: "
+                        f"nothing here to pack -- no objects and no terrain "
+                        f"assets.")
+                pretty = ', '.join(found) if found else 'none yet'
+                print(f"{count} object(s) discovered in "
+                      f"'{os.path.basename(source_dir)}'; terrain assets "
+                      f"found: {pretty}")
+                if not ask(Question(
+                        'setup.confirm',
+                        f"Set up '{os.path.basename(source_dir)}' as a "
+                        f"spritetool terrain? This writes "
+                        f"{settings_toml.SETTINGS_TOML_NAME} to it.")):
+                    raise PackFailed(
+                        f"Not packing {os.path.basename(source_dir)}: "
+                        f"setting the folder up was declined.")
+                # Held in memory, not written yet: the first-run defaults
+                # offer below is part of the same sitting, and the marker is
+                # written once, with what was borrowed, after it. Writing it
+                # here would read as "packed before" and suppress the offer.
+                # `toml` stays None: there are no settings on disk yet, so
+                # the object-settings step below still looks for legacy files
+                # to migrate. The fresh marker is kept apart and handed to
+                # _mark_settled, which folds it into whatever the conversion
+                # wrote.
+                fresh_toml = settings_toml.TerrainSettings()
         listings = [f for f in os.listdir(source_dir)
                     if f.lower().endswith('.dir.txt')]
+        if listings:
+            if terrain and ask(Question(
+                    'settings.convert_listing',
+                    f'Pack from the folder scan and '
+                    f'{settings_toml.SETTINGS_TOML_NAME} instead of the '
+                    f'{listings[0]} listing? The listing stays on disk, '
+                    f'unused.')):
+                listings = []
         if listings:
             stem = listings[0][:-len('.dir.txt')]
             with open(os.path.join(source_dir, listings[0]),
@@ -4368,27 +4796,43 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                 names = [ln.strip() for ln in fh if ln.strip()]
             print(f"Using {listings[0]} ({len(names)} entries)")
             if terrain and not _has_icon(source_dir):
-                # A listing says which entries go in the archive, and the
-                # icon is not one of them -- it sits beside Level.dir. So
-                # nothing above offers a default for it the way the scanned
-                # path does, and without this the pack would run to the end
-                # and mention the missing icon in its closing notes, long
-                # after the point where it could be dealt with.
-                #
                 # SpriteEditor kept the icon in the installed terrain rather
                 # than the build folder, so its folders reach us without one
                 # and the archive alone will not load.
-                raise PackFailed(
-                    f'Not packing {os.path.basename(source_dir)}: no icon, '
-                    f'and {listings[0]} says what to pack so none was '
-                    f'offered',
-                    hints=[f'the game shows one on the land generator screen '
-                           f'and will not load a terrain without it',
-                           f'put a 64x64 icon.png or icon.bmp in the folder; '
-                           f'`decompress` writes one as icon.img.bmp if you '
-                           f'have the terrain installed',
-                           f'or delete {listings[0]} to have the folder '
-                           f'scanned, which offers a default icon'])
+                #
+                # The icon is not an archive entry -- it sits beside
+                # Level.dir -- so offering one does not touch the entry set
+                # the listing names, and the listing stays authoritative for
+                # what goes in. That makes this the same offer the scanned
+                # path makes, which is what the author wants at this point:
+                # a missing icon is a piece to supply, not a reason to
+                # refuse a folder that is otherwise ready.
+                # Only the icon: the listing names every archive entry, so
+                # the other defaults are none of this path's business.
+                where = os.path.basename(source_dir.rstrip(os.sep))
+                hints = [f'the game shows one on the land generator screen '
+                         f'and will not load a terrain without it',
+                         f'put a 64x64 icon.png or icon.bmp in the folder; '
+                         f'`decompress` writes one as icon.img.bmp if you '
+                         f'have the terrain installed']
+                available = default_sources((DEFAULT_ICON,))
+                if DEFAULT_ICON not in available:
+                    raise PackFailed(
+                        f'Not packing {os.path.basename(source_dir)}: no '
+                        f'icon, and none to offer', hints=hints)
+                print('No icon: the icon shown for this terrain on the land '
+                      'generator screen. A terrain needs it.')
+                if not ask(Question(
+                        f'defaults.{DEFAULT_ICON.split(".")[0]}',
+                        f'Use the default icon and write it to {where}?')):
+                    raise PackFailed(
+                        f'Not packing {os.path.basename(source_dir)}: a '
+                        f'terrain needs an icon', hints=hints)
+                dest = os.path.join(source_dir, 'icon.png')
+                if not os.path.exists(dest):
+                    import shutil
+                    shutil.copyfile(available[DEFAULT_ICON], dest)
+                    print(f'  copied icon.png into {where}', file=sys.stderr)
         else:
             if not terrain:
                 names, scan_notes = scan_archive(source_dir)
@@ -4399,24 +4843,33 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                       f"{len(names)} entries")
             else:
                 scanned = True
-                names, _objects, scan_notes = scan_terrain(source_dir)
+                names, _objects, scan_notes = scan_terrain(
+                    source_dir,
+                    toml.sprites.keys() if toml is not None else None,
+                    toml.objects.keys() if toml is not None else None)
                 stem = 'Level'
                 for note in scan_notes:
                     print(f'  note: {note}', file=sys.stderr)
                 synthetic['index.txt'] = ''.join(
                     f'{o}\r\n' for o in _objects).encode('latin-1')
                 obj_settings, trouble = _settle_object_settings(
-                    source_dir, _objects, ask)
+                    source_dir, _objects, ask, toml)
                 if trouble:
                     raise PackFailed(
                         f"Not packing "
                         f"{os.path.basename(source_dir)}: {trouble}")
+                if toml is None:
+                    # A conversion may have just written the file (and, on a
+                    # yes to clearing them, removed the .spr.spd sidecars the
+                    # geometry came from). Read it back so this run packs from
+                    # the same source the next one will, rather than looking
+                    # for sidecars that are no longer there.
+                    toml = settings_toml.load(source_dir)
                 for stem, values in obj_settings.items():
                     synthetic[f'{stem}.inf'] = format_inf(values)
-                settings = read_settings(source_dir)
-                first_run = settings is None or offer_defaults
+                first_run = not folder_settled(source_dir) or offer_defaults
                 if first_run:
-                    why = ('asked for' if settings is not None
+                    why = ('asked for' if folder_settled(source_dir)
                            else 'first run')
                     print(f"  {why}: offering what {DEFAULTS_DIR} has "
                           f"for anything missing")
@@ -4432,28 +4885,27 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                     # lays them out where a later run would, so one folder
                     # packs to one archive whether or not this was the run
                     # that fetched them.
-                    names, _objects, _ = scan_terrain(source_dir)
+                    names, _objects, _ = scan_terrain(
+                        source_dir,
+                        toml.sprites.keys() if toml is not None else None,
+                        toml.objects.keys() if toml is not None else None)
                 if first_run:
                     # Written whatever was decided, including nothing:
                     # the point is that the questions were asked once.
-                    write_settings(source_dir, {
-                        'created': _today(),
-                        'borrowed': (','.join(sorted(borrowed))
-                                     or 'nothing'),
-                    })
+                    _mark_settled(source_dir, sorted(borrowed),
+                                  fresh_toml or toml)
                     # They keep no claim on the palette, though: the budget
                     # is the author's, and a default is fitted to what is
                     # left of it rather than shrinking their work for it.
                     lent_names = list(borrowed)
-                elif settings:
+                else:
                     # Still borrowed, still spending none of the budget.
                     # Without this a folder packs differently the second
                     # time: the copies are ordinary files by then, the cut
                     # is made across them too, and it lands somewhere else
                     # -- 13 of 112 colours in common, in one measured case.
-                    was = settings.get('borrowed', '')
-                    if was and was != 'nothing':
-                        lent_names = [n for n in was.split(',') if n]
+                    was = _borrowed_names(source_dir, toml, legacy_borrowed)
+                    lent_names = was
                 print(f"Scanned {os.path.basename(source_dir)}: "
                       f"{len(names)} entries, {len(_objects)} objects")
     else:
@@ -4631,9 +5083,19 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
         if slot is not None:
             entry_palette = list(slot)
             force_this = True
+        # The sprite's geometry from the TOML, when the folder has one. The
+        # key is the entry stem for the terrain's own sprites (debris,
+        # back2); a gfx override keeps its folder prefix (gfx0\worm) so two
+        # slots can hold the same-named sprite at different sizes.
+        sprite_meta = None
+        if toml is not None and name.lower().endswith('.spr'):
+            stem = name[:-4]
+            key = stem if ('\\' in stem or '/' in stem) \
+                else stem.split('\\')[-1].split('/')[-1]
+            sprite_meta = toml.sprites.get(key)
         return (os.path.join(source_dir, rel), name, recreate,
                 compress_spr, compress_img, opaque, entry_palette,
-                extra.get(name), force_this)
+                extra.get(name), force_this, sprite_meta)
 
     todo = [n for n in names if n not in synthetic]
     results: Dict[str, object] = {}
@@ -4705,36 +5167,6 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
         for line in trouble.lines():
             print(line)
         print("  --force given; writing anyway.")
-
-    # A terrain keeps its object settings in object_settings.txt, written
-    # by the scan; writing them out again one file to an object would put
-    # them in two places and undo the consolidation on the next run.
-    if output_inf and terrain and scanned and not obj_settings:
-        # An object's parameters as packed, written back beside the art so
-        # that whatever it was given -- the defaults, most often -- is
-        # visible and editable rather than staying implied. Only for a
-        # scanned folder: a listing may sit anywhere, and writing files
-        # next to one is not what was asked for.
-        #
-        # Written as .txt: the archive needs the entry to be a .inf, but on
-        # disk a .txt is the friendlier of the two names to open, and the
-        # tool reads either.
-        written = kept = 0
-        for name, payload in sorted(packed.items()):
-            if not name.lower().endswith('.inf'):
-                continue
-            rel = name.replace('\\', os.sep)
-            base = os.path.join(source_dir, rel[:-4])
-            if os.path.exists(base + '.inf') or os.path.exists(base + '.txt'):
-                kept += 1           # authored, so not overwritten
-                continue
-            os.makedirs(os.path.dirname(base + '.txt'), exist_ok=True)
-            with open(base + '.txt', 'wb') as fh:
-                fh.write(payload)
-            written += 1
-        print(f"Wrote {written} parameter file(s) to "
-              f"{os.path.basename(source_dir)}"
-              + (f", left {kept} already there alone" if kept else ""))
 
     archive = writer.build()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -5028,13 +5460,6 @@ def main():
             print(f"Error: {e}")
             return 1
 
-        # The listing `pack` takes as its argument. It is not stored in the
-        # archive, so rebuild it from the entry order; CRLF and no .spd
-        # entries, the form SpriteEditor writes.
-        listing = os.path.join(sprite_output_dir, f'{dir_basename}.dir.txt')
-        with open(listing, 'w', encoding='latin-1', newline='') as out:
-            out.write(''.join(f'{n}\r\n' for n in entry_order))
-
         # A terrain's icon is not in the archive: it sits beside it, spelled
         # text.img in any casing the author fancied -- 102 of a stock install
         # use text.img, 38 TEXT.IMG. Bring it along under the name pack-terrain
@@ -5049,7 +5474,6 @@ def main():
             print(f"Decoded {img_count} images to {sprite_output_dir}")
         if copied:
             print(f"Copied {copied} files through unchanged (.inf, index.txt)")
-        print(f"Wrote {os.path.basename(listing)} listing {len(entry_order)} entries")
         if want_gif:
             print(f"Generated {gif_count} animated GIFs in {gif_output_dir}")
         if failed:
@@ -5083,6 +5507,27 @@ def main():
                   f"refuses the transfer.", file=sys.stderr)
             print(f"  note: the largest entry is {done.largest[0]} at "
                   f"{done.largest[1]:,} bytes", file=sys.stderr)
+        return 0
+
+    elif command == "unpack-terrain":
+        args = [a for a in sys.argv[2:] if not a.startswith('-')]
+        if not args:
+            print("Error: unpack-terrain requires a Level.dir argument")
+            return 1
+        dir_file = args[0]
+        if not os.path.exists(dir_file):
+            print(f"Error: File not found: {dir_file}")
+            return 1
+        base = os.path.splitext(os.path.basename(dir_file))[0]
+        out_dir = args[1] if len(args) > 1 else f'{base} unpacked'
+        try:
+            made = unpack_terrain(dir_file, out_dir)
+        except SpritetoolError as exc:
+            for line in exc.lines():
+                print(line)
+            return 1
+        print(f"Unpacked {made} entries into {out_dir}; pack-terrain it "
+              f"straight back")
         return 0
 
     elif command == "land":

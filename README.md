@@ -91,7 +91,10 @@ python3 wa_spritetool.py pack-terrain build/ output/
 The output folder may not be the source folder. Leave the
 output off and a `<name> packed` folder is made beside the source.
 
-The input folder has to be called `build`.
+The first time a folder is packed, `pack-terrain` confirms it is meant to be
+a terrain (`setup.confirm`), reporting what it found there -- any folder may
+be one now; the name no longer has to be `build`. Saying yes writes
+`settings.spritetool.toml` to the folder and packs; saying no stops.
 
 - the **non-object assets** are found by their fixed names: `text.img`, `soil.img`,
   `grass.img`, `gradient.img`, `bridge.img`, `bridge-l.img`, `bridge-r.img`,
@@ -129,7 +132,6 @@ python3 wa_spritetool.py pack-terrain Level.dir.txt output/
 | `--defaults` | take anything missing from `presets/`** without asking |
 | `--no-defaults` | never take any of it |
 | `--offer-defaults` | ask about missing art again on a folder already packed |
-| `--no-output-inf` | do not write object settings back into the folder |
 | `--repalette` | fit everything to one palette, without asking |
 | `--write-palette` | write the terrain's colours to `build/palette.png` |
 | `--read-palette` | fit everything to `build/palette.png` |
@@ -147,7 +149,7 @@ The defaults spend none of the 112-colour budget.
 
 The offer is made **once**, on the folder's first run, one piece at a time --
 declining a required piece stops the build, declining an optional one carries
-on without it. `settings.spritetool` is then written into the folder, and
+on without it. `settings.spritetool.toml` is then written into the folder, and
 nothing is offered again: a piece missing on a later run was deleted on
 purpose rather than overlooked. The required ones are still checked every run,
 since the game will not open the terrain without them. Pass `--offer-defaults`
@@ -282,25 +284,12 @@ its colours read in the order they are met. When the look moves on, run
 
 ### Object settings
 
-`pack-terrain` keeps every object's settings in one `object_settings.txt`,
-written into the folder on the first run and read on every one after:
+`pack-terrain` keeps every object's settings in `settings.spritetool.toml`,
+one `[object.<name>]` table an object, written into the folder on the first
+run and read on every one after:
 
 ```
-// probability  1 to 10. Affects the chance of an object being placed, and is
-//              relative to the values of other objects. Smaller objects, or
-//              ones with a narrow base, typically have more places to appear.
-// front        Whether the object is in front or behind the terrain.
-//              0 = behind, 1 = in front
-// soil         Whether the soil texture appears when the object is
-//              destroyed. 0 = none, 1 = soil
-// collide      Enables or disables collision. 1 = enabled, 0 = disabled
-// nostack      Whether other objects can be placed onto this one.
-//              0 = yes, 1 = no
-// where        Where the object is placed. 2 = ceiling, 3 = floor, 0 or 1 =
-//              the side of the terrain, saying which side of the object is
-//              fixed to it, left (0) or right (1)
-
-floor1.png
+[object.floor1]
 probability = 5
 front = 0
 soil = 0
@@ -309,19 +298,35 @@ nostack = 1
 where = 3
 ```
 
-Entries are written alphabetically and their order in `object_settings.txt`
-carries no meaning -- the terrain is packed alphabetically whatever the file says.
+The six values are the guide's: `probability` (1 to 10, relative to the other
+objects), `front` (0 = behind the terrain, 1 = in front), `soil` (0 = no soil
+when destroyed, 1 = soil), `collide` (1 = enabled), `nostack` (0 = other
+objects may be placed on this, 1 = not), and `where` (2 = ceiling, 3 = floor,
+0 or 1 = the side of the terrain, saying which side of the object is fixed to
+it, left or right).
 
-If an object has a `.inf` file beside it holding it's settings , `pack-terrain` offers to
-move the content into `object_settings.txt` and delete them; declining stops the
-build rather than leave the settings in two places. A loose `.inf` file setting what
-`object_settings.txt` already sets is refused outright, since there is no
-saying which was meant.
+Entries are written alphabetically and their order in the file carries no
+meaning -- the terrain is packed alphabetically whatever the file says.
 
-`objectname.inf` and `objectname.txt` are both possible, if they are both present,
-the `.inf` will be prioritized. After pack-terrain both files will be gone and copied into
-`object_settings.txt`.
- 
+The SpriteEditor-era formats are still read, but only to be migrated. A folder
+holding an `object_settings.txt`, or a loose `.inf`/`.txt` beside an object,
+is offered a conversion into `settings.spritetool.toml`
+(`settings.convert_toml`); declining still packs, writing nothing back. A
+loose `.inf` setting what the combined source already sets is refused
+outright, since there is no saying which was meant.
+
+Once the settings are in the TOML, the files they came from are offered up
+for deletion (`settings.clear_legacy`, default no) so they stop cluttering
+the folder. Only what the TOML wholly answers for goes: the per-object
+`.inf`/`.txt`, `object_settings.txt`, the old `settings.spritetool` marker,
+and a `.spr.spd` whose geometry the conversion has just copied into the
+TOML. `index.txt` and `Level.dir.txt` are never deleted -- the first is a
+real archive entry, the second is your own record of entry order -- and art
+borrowed from `presets/` keeps its own sidecars.
+
+The `.inf` entries written INTO the archive are unchanged -- that is the
+game's own format.
+
 
 ### Decode sprites and images
 
@@ -345,10 +350,14 @@ back together would lose its icon and be offered a default instead. The land
 texture shares the name and is told apart by being 256x256 rather than 64x64.
 
 Each image becomes a single `<name>.img.bmp`. Anything that is not a picture --
-`.inf` object parameters, `index.txt`, fonts -- is copied through untouched,
-and a `<name>.dir.txt` listing the archive's entries in order is written
-alongside. The result is a folder `pack` builds straight back into a `.dir`,
-with the objects, palettes and frame counts intact.
+`.inf` object parameters, `index.txt`, fonts -- is copied through untouched.
+The result is a folder `pack` builds straight back into a `.dir`, with the
+objects, palettes and frame counts intact.
+
+To take a terrain apart for editing, use `unpack-terrain` instead: it decodes
+the art the same way but writes the settings to `settings.spritetool.toml`
+rather than the legacy files, so the folder packs straight back with
+`pack-terrain`.
 
 A sprite bank (`.bnk`) holds many unnamed animations sharing one palette, so
 its sprites go in a folder named after the bank and are numbered in order:
