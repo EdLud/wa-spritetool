@@ -51,6 +51,15 @@ From a terminal it is:
 python3 -m gui
 ```
 
+Drop a build folder to pack it, or drop a `.dir` archive to take one apart.
+An archive asks three things in the order the answers are needed: where the
+result should go, whether to **extract** it (the files exactly as the archive
+stores them) or **decompress** it (those files plus every picture decoded to
+an editable BMP), and -- for a decompress -- whether to write an animated GIF
+per sprite. The GIFs are the slow part, so they are asked for rather than
+assumed. Dismissing any of the three stops it, and nothing is written until
+the last one is answered.
+
 The window's tabs show the folder's files and their colours, the objects'
 placement settings, the sprite records, the shared palette, and what packing
 changed. The **Sprites** tab is where a sheet's record lives: a sprite is one

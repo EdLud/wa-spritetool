@@ -26,6 +26,7 @@ class PackJob(QObject):
     question = Signal(dict)
     finished = Signal()
     done = Signal(dict)
+    unpacked = Signal(dict)          # an extract/decompress finished
     failed = Signal(list)
     crashed = Signal(str)
     cancelled = Signal()
@@ -59,6 +60,28 @@ class PackJob(QObject):
         self._pump.event.connect(self._dispatch)
         self._pump.start()
 
+    def start_unpack(self, archive, out_dir, mode, want_gif):
+        """Take an archive apart, rather than build one.
+
+        The same child-and-pump arrangement as a pack: decoding a shipped
+        Water.dir to GIFs takes twenty seconds, which is far too long to hold
+        the window for. `running` and `cancel` cover it unchanged.
+        """
+        if self.running:
+            raise RuntimeError('a job is already running')
+        ctx = multiprocessing.get_context('spawn')
+        events = ctx.Queue()
+        self._replies = ctx.Queue()
+        self._proc = ctx.Process(
+            target=job.unpack,
+            args=(archive, out_dir, mode, want_gif, events, self._replies),
+            daemon=True)
+        self._proc.start()
+
+        self._pump = _Pump(events)
+        self._pump.event.connect(self._dispatch)
+        self._pump.start()
+
     def answer(self, reply):
         """Unblock the child, which is sitting in replies.get()."""
         if self._replies is not None:
@@ -82,6 +105,8 @@ class PackJob(QObject):
             self.question.emit(payload)
         elif kind == 'done':
             self.done.emit(payload)
+        elif kind == 'unpacked':
+            self.unpacked.emit(payload)
         elif kind == 'failed':
             self.failed.emit(payload)
         elif kind == 'crashed':

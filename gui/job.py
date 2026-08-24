@@ -184,3 +184,61 @@ def run(folder, out_dir, option_fields, answers, events, replies):
         sys.stdout.flush()
         sys.stderr.flush()
         events.put(('finished', None))
+
+
+def unpack(archive, out_dir, mode, want_gif, events, replies):
+    """Take `archive` apart into `out_dir`, reporting to `events`.
+
+    `mode` is 'extract' (the archive's files as they are stored) or
+    'decompress' (the same files with every picture decoded to BMP, and
+    optionally a GIF per sprite).
+
+    In a spawned child for the same reason packing is: decoding a shipped
+    Water.dir to GIFs takes twenty seconds, and a window that stops answering
+    for twenty seconds looks broken. It asks nothing, so `replies` is unused
+    -- it is taken anyway so the bridge can start either job the same way.
+
+    The work is done by calling the tool's own command line rather than the
+    functions behind it, because there are no functions behind it: extract
+    and decompress live inside main()'s argument dispatch. Reaching them
+    through argv keeps one implementation instead of a second copy here that
+    would drift.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import spritetool as st
+
+    recent = []
+    sys.stdout = _Tee(events, 'out', recent)
+    sys.stderr = _Tee(events, 'err', recent)
+
+    argv = [sys.argv[0] if sys.argv else 'spritetool.py', mode,
+            archive, out_dir]
+    if want_gif and mode == 'decompress':
+        argv.append('--gif')
+
+    saved = sys.argv
+    try:
+        sys.argv = argv
+        code = st.main()
+    except st.SpritetoolError as exc:
+        events.put(('failed', exc.lines()))
+    except Exception:
+        events.put(('crashed', traceback.format_exc()))
+    else:
+        if code:
+            # main() reports its own reason on the way out, so the lines are
+            # already in the log; this is only what stops the window calling
+            # it a success.
+            events.put(('failed', [f'{mode} did not finish (exit {code})']))
+        else:
+            events.put(('unpacked', {
+                'mode': mode,
+                'out_dir': out_dir,
+                'archive': archive,
+                'gifs': bool(want_gif and mode == 'decompress'),
+            }))
+    finally:
+        sys.argv = saved
+        sys.stdout.flush()
+        sys.stderr.flush()
+        events.put(('finished', None))

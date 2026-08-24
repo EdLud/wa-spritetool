@@ -17,6 +17,7 @@ Groups:
   colours   numpy and pure-Python agreeing on what they count
   toml      the settings.spritetool.toml model: round-trip, migration, the
             setup prompt, and decompress no longer writing a .dir.txt
+  unpack    the window's extract/decompress job, driven without a window
   gui       the window builds and its job process imports no Qt (skipped
             without PySide6, which the tool does not depend on)
   nested    the pool-inside-a-pool agreeing with no pool at all. NOT run by
@@ -415,6 +416,82 @@ def check_gui(no_numpy=False):
                        capture_output=True, text=True, cwd=ROOT)
     return say(r.stdout.strip() == 'clean', 'job imports no Qt',
                r.stdout.strip() or _tail(r.stderr)) and good
+
+
+def check_unpack(no_numpy=False):
+    """The window's extract/decompress job, without the window.
+
+    A dropped .dir is taken apart in a child process, the same arrangement
+    packing uses, because decoding a shipped Water.dir to GIFs takes twenty
+    seconds and a window that stops answering for twenty seconds looks
+    broken. The job holds no Qt, so this runs whether or not PySide6 is
+    installed -- what it checks is that both modes write what they should and
+    that a file which is not an archive fails rather than crashes.
+    """
+    good = True
+    src = os.path.join(HERE, 'wa', 'Water.dir')
+    if not os.path.exists(src):
+        return say(False, 'unpack job', 'fixture missing')
+
+    tmp = tempfile.mkdtemp(prefix='unpack-job-')
+    try:
+        # Driven through a script rather than -c: spawn re-imports __main__ in
+        # the child, and a __main__ that came from stdin cannot be re-read.
+        driver = os.path.join(tmp, 'drive.py')
+        with open(driver, 'w') as fh:
+            fh.write(
+                'import sys, os, json, multiprocessing\n'
+                f'sys.path.insert(0, {ROOT!r})\n'
+                'from gui import job\n'
+                'def go(archive, out, mode, gif):\n'
+                '    ctx = multiprocessing.get_context("spawn")\n'
+                '    ev, rp = ctx.Queue(), ctx.Queue()\n'
+                '    p = ctx.Process(target=job.unpack,\n'
+                '                    args=(archive, out, mode, gif, ev, rp))\n'
+                '    p.start()\n'
+                '    kinds, payload = [], None\n'
+                '    while True:\n'
+                '        k, v = ev.get()\n'
+                '        kinds.append(k)\n'
+                '        if k in ("unpacked", "failed"): payload = v\n'
+                '        if k == "finished": break\n'
+                '    p.join()\n'
+                '    n = sum(len(f) for _, _, f in os.walk(out))\n'
+                '    return {"kinds": sorted(set(kinds)), "files": n,\n'
+                '            "payload": payload}\n'
+                'if __name__ == "__main__":\n'
+                '    a, out = sys.argv[1], sys.argv[2]\n'
+                '    res = {\n'
+                '        "extract": go(a, os.path.join(out, "x"), "extract", False),\n'
+                '        "decompress": go(a, os.path.join(out, "d"), "decompress", False),\n'
+                '        "bad": go(__file__, os.path.join(out, "b"), "extract", False),\n'
+                '    }\n'
+                '    print(json.dumps(res))\n')
+        r = subprocess.run([sys.executable, driver, src, tmp],
+                           capture_output=True, text=True, cwd=ROOT)
+        if r.returncode:
+            return say(False, 'unpack job', _tail(r.stdout + r.stderr))
+        import json
+        res = json.loads(r.stdout.splitlines()[-1])
+        ex, de, bad = res['extract'], res['decompress'], res['bad']
+        if 'unpacked' not in ex['kinds'] or not ex['files']:
+            good = say(False, 'unpack job', f"extract wrote nothing: {ex}")
+        elif 'unpacked' not in de['kinds'] or de['files'] <= ex['files']:
+            # decompress writes the stored files AND a decoded picture for
+            # each, so it must come out ahead of a plain extract.
+            good = say(False, 'unpack job',
+                       f"decompress did not decode: {de['files']} files "
+                       f"vs extract's {ex['files']}")
+        elif 'failed' not in bad['kinds']:
+            good = say(False, 'unpack job',
+                       f'a file that is not an archive did not fail: {bad}')
+        else:
+            good = say(True, 'unpack job',
+                       f"extract {ex['files']} files, decompress "
+                       f"{de['files']}, non-archive refused") and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return good
 
 
 def check_padding(no_numpy=False):
@@ -1023,7 +1100,7 @@ def check_toml(no_numpy=False):
 GROUPS = {'decode': check_decode, 'manifest': check_manifest,
           'pack': check_pack, 'jobs': check_jobs, 'nested': check_nested,
           'padding': check_padding, 'colours': check_colours,
-          'toml': check_toml, 'gui': check_gui}
+          'toml': check_toml, 'unpack': check_unpack, 'gui': check_gui}
 
 #: Left out unless named or --all is given. Slow enough to change how often
 #: the suite gets run, which is its own kind of risk.

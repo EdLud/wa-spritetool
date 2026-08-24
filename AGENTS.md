@@ -271,6 +271,15 @@ SpriteEditor writes).
   is only offered when a `.bmp`/`.png` sits beside it to rebuild it from, and
   a `.spr` only when its frame count is in the TOML or a `.spd` -- a sheet
   says nothing about its own frame count. All default to no.
+- The window takes archives as well as folders. `DropZone` classifies what
+  was dropped (`is_archive`, `.dir` only -- the one extension `extract` and
+  `decompress` read) and the window asks output folder, then extract vs
+  decompress, then GIFs. The work runs through `job.unpack` in a spawned
+  child, the same arrangement packing uses: a `Water.dir` decoded to GIFs
+  takes about twenty seconds. `job.unpack` reaches `extract`/`decompress` by
+  calling `spritetool.main()` with a built argv, because there are no
+  functions behind those commands -- they live inside `main()`'s dispatch,
+  and a second copy here would drift from it.
 - `sprite_records(folder)` pairs every sprite with its record and says what
   does not add up: `picture_size` reads a sheet's dimensions from its header
   alone (a parallax sheet is 1024x32000 and decoding one to measure it costs

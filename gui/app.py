@@ -62,19 +62,38 @@ def _elide(path, keep=52):
 
 
 class DropZone(QFrame):
-    """Where a folder lands. Also a button, for people who do not drag."""
+    """Where a folder or an archive lands. Also a button, for people who do
+    not drag.
 
-    def __init__(self, on_folder):
+    Two things can be dropped and they lead opposite ways: a folder is a
+    terrain to build, an archive is one to take apart. Both are accepted here
+    rather than in two places, because from the author's side it is one
+    gesture -- this is the thing, do what it needs.
+    """
+
+    #: What an archive is called. `.dir` is the only one extract and
+    #: decompress read, and the only one worth accepting for them.
+    ARCHIVE_EXTS = ('.dir',)
+
+    @classmethod
+    def is_archive(cls, path):
+        return (os.path.isfile(path)
+                and path.lower().endswith(cls.ARCHIVE_EXTS))
+
+    def __init__(self, on_folder, on_archive=None):
         super().__init__()
         self._on_folder = on_folder
+        self._on_archive = on_archive
         self.setAcceptDrops(True)
         self.setObjectName('dropzone')
         self.setMinimumHeight(96)
 
-        self._label = QLabel('Drop a terrain build folder here')
+        self._label = QLabel(self.IDLE_TEXT)
         self._label.setAlignment(Qt.AlignCenter)
         self._label.setObjectName('droplabel')
         self._label.setTextFormat(Qt.RichText)
+        self._label.setToolTip(self.IDLE_TIP)
+        self.setToolTip(self.IDLE_TIP)
 
         browse = QPushButton('Choose folder...')
         browse.setFixedWidth(150)
@@ -89,10 +108,19 @@ class DropZone(QFrame):
         row.addStretch(1)
         box.addLayout(row)
 
+    #: Said in the label when nothing has been dropped, and as the tooltip
+    #: wherever the zone is described. One sentence per thing that can be
+    #: dropped, because the two do opposite jobs.
+    IDLE_TEXT = 'Drop a terrain build folder, or a .dir archive'
+    IDLE_TIP = ('A build folder is packed into a terrain.\n'
+                'A .dir archive is taken apart: you pick where it goes, '
+                'then whether to extract its files as they are stored or '
+                'decompress them into editable pictures.')
+
     def show_folder(self, folder):
         if not folder:
-            self._label.setText('Drop a terrain build folder here')
-            self._label.setToolTip('')
+            self._label.setText(self.IDLE_TEXT)
+            self._label.setToolTip(self.IDLE_TIP)
             return
         # The name, big, and the path beneath it small. A build folder is
         # usually several levels down and the full path crowds out the one
@@ -108,11 +136,21 @@ class DropZone(QFrame):
         if folder:
             self._on_folder(folder)
 
-    # Only ever one folder, and only a folder: a dropped file is a mistake
-    # worth refusing at the door rather than reporting later.
+    # One thing at a time, and only a folder or an archive. Anything else is
+    # a mistake worth refusing at the door rather than reporting later: the
+    # zone simply does not light up, which says no before the mouse is let go.
+    def _accepts(self, urls):
+        if len(urls) != 1:
+            return None
+        path = urls[0].toLocalFile()
+        if os.path.isdir(path):
+            return 'folder'
+        if self.is_archive(path) and self._on_archive is not None:
+            return 'archive'
+        return None
+
     def dragEnterEvent(self, event):
-        urls = event.mimeData().urls()
-        if len(urls) == 1 and os.path.isdir(urls[0].toLocalFile()):
+        if self._accepts(event.mimeData().urls()):
             event.acceptProposedAction()
             self.setProperty('hot', True)
             self._restyle()
@@ -124,7 +162,15 @@ class DropZone(QFrame):
     def dropEvent(self, event):
         self.setProperty('hot', False)
         self._restyle()
-        self._on_folder(event.mimeData().urls()[0].toLocalFile())
+        urls = event.mimeData().urls()
+        kind = self._accepts(urls)
+        if kind is None:
+            return
+        path = urls[0].toLocalFile()
+        if kind == 'archive':
+            self._on_archive(path)
+        else:
+            self._on_folder(path)
 
     def _restyle(self):
         self.style().unpolish(self)
@@ -414,7 +460,7 @@ class Window(QMainWindow):
         #: Questions settled before packing, by key -- see _offer_setup.
         self._answers = {}
 
-        self._drop = DropZone(self.set_folder)
+        self._drop = DropZone(self.set_folder, self.take_archive_apart)
         self._pack = QPushButton('Pack to Level.dir')
         self._pack.setObjectName('primary')
         self._pack.setEnabled(False)
@@ -1024,6 +1070,99 @@ class Window(QMainWindow):
         self._job.finished.connect(self._settle)
         self._job.start(self._folder, self._out_dir, options, self._answers)
 
+    def take_archive_apart(self, archive, ask=True):
+        """A dropped .dir: where to put it, how to open it, then do it.
+
+        Three questions in the order the answers are needed, so nothing is
+        asked that a later answer could make pointless: where it goes, then
+        whether to extract or decompress, then -- only for a decompress --
+        whether to write GIFs, which is the one that costs twenty seconds on
+        a shipped Water.dir.
+
+        Dismissing any of them stops the whole thing. Nothing is written
+        until the last is answered.
+        """
+        if self._job is not None and self._job.running:
+            QMessageBox.information(
+                self, APP_NAME, 'Something is already running. Let it finish '
+                'first.')
+            return
+        if not ask:
+            return
+
+        name = os.path.basename(archive)
+        # Beside the archive, named after it -- the same guess the output box
+        # makes for a pack, and shown in the chooser so it can be corrected.
+        suggested = os.path.join(os.path.dirname(os.path.abspath(archive)),
+                                 f'{os.path.splitext(name)[0]} unpacked')
+        out_dir = QFileDialog.getExistingDirectory(
+            self, f'Where should {name} go?', os.path.dirname(suggested))
+        if not out_dir:
+            return
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(APP_NAME)
+        box.setText(f'How should {name} be opened?')
+        box.setInformativeText(
+            'Extract writes the files exactly as the archive stores them.\n\n'
+            'Decompress writes those files and decodes every picture to a '
+            'BMP you can edit, with a .spd beside each sprite.')
+        decompress = box.addButton('Decompress', QMessageBox.AcceptRole)
+        extract = box.addButton('Extract', QMessageBox.AcceptRole)
+        box.addButton('Cancel', QMessageBox.RejectRole)
+        box.setDefaultButton(decompress)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is decompress:
+            mode = 'decompress'
+        elif clicked is extract:
+            mode = 'extract'
+        else:
+            return
+
+        want_gif = False
+        if mode == 'decompress':
+            gbox = QMessageBox(self)
+            gbox.setIcon(QMessageBox.Question)
+            gbox.setWindowTitle(APP_NAME)
+            gbox.setText('Write an animated GIF for each sprite?')
+            gbox.setInformativeText(
+                'A preview of every animation, beside the decoded art. It is '
+                'the slow part -- a shipped Water.dir takes about twenty '
+                'seconds -- and nothing needs them to pack again.')
+            no = gbox.addButton('No', QMessageBox.NoRole)
+            yes = gbox.addButton('Write GIFs', QMessageBox.YesRole)
+            gbox.addButton('Cancel', QMessageBox.RejectRole)
+            gbox.setDefaultButton(no)
+            gbox.exec()
+            if gbox.clickedButton() is yes:
+                want_gif = True
+            elif gbox.clickedButton() is not no:
+                return
+
+        self._log.clear()
+        self._changed.clear()
+        self._progress.setVisible(True)
+        self._pack.setEnabled(False)
+        self.statusBar().showMessage(f'{mode.capitalize()}ing {name}...')
+
+        self._job = PackJob(self)
+        self._job.line.connect(self._say)
+        self._job.unpacked.connect(self._unpacked)
+        self._job.failed.connect(self._refused)
+        self._job.crashed.connect(self._crashed)
+        self._job.finished.connect(self._settle)
+        self._job.start_unpack(archive, out_dir, mode, want_gif)
+
+    def _unpacked(self, r):
+        """An extract or decompress finished."""
+        where = r['out_dir']
+        gifs = ', with GIFs' if r.get('gifs') else ''
+        self._say('out', f"\n{r['mode'].capitalize()}ed "
+                         f"{os.path.basename(r['archive'])} into {where}{gifs}")
+        self.statusBar().showMessage(f"Done: {where}")
+
     def _say(self, stream, text):
         if not text.strip():
             return
@@ -1102,7 +1241,10 @@ class Window(QMainWindow):
 
     def _settle(self):
         self._progress.setVisible(False)
-        self._pack.setEnabled(True)
+        # Only if there is something to pack. An archive job leaves no folder
+        # loaded, and a Pack button that lights up with nothing behind it
+        # invites a press that can only report the obvious.
+        self._pack.setEnabled(self._folder is not None)
 
 
 STYLE = """
