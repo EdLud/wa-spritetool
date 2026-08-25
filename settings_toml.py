@@ -55,7 +55,15 @@ OBJECT_DEFAULT = (5, 0, 0, 1, 1, 3)
 SPRITE_KEYS = ('frames', 'width', 'height', 'framerate', 'flags')
 
 # The tool's own bookkeeping keys under [spritetool].
-TOOL_KEYS = ('created', 'borrowed', 'last_output')
+TOOL_KEYS = ('created', 'borrowed', 'last_output',
+             'recolour', 'compress_spr', 'force')
+
+# The three that are a choice rather than a record, with the answer the tool
+# takes when the file does not say. They belong to the terrain rather than to
+# the machine: a folder that has to be forced, or whose art is refitted every
+# pack, is that way wherever it is opened, so they travel in the file with
+# everything else about it.
+OPTION_DEFAULTS = {'recolour': False, 'compress_spr': True, 'force': False}
 
 
 @dataclass
@@ -71,6 +79,24 @@ class TerrainSettings:
     sprites: Dict[str, Dict[str, int]] = field(default_factory=dict)
     tool: Dict[str, object] = field(default_factory=dict)
     problems: List[str] = field(default_factory=list)
+
+
+def options_of(settings: Optional['TerrainSettings']) -> Dict[str, bool]:
+    """The three per-project choices, defaulted for whatever the file omits.
+
+    One place, so the window and the command line cannot drift about what a
+    folder that says nothing is asking for. A value that is not a bool -- a
+    hand edit of `force = 2` -- is ignored in favour of the default rather
+    than counted as true, since "anything non-zero" is not what the file
+    means to say.
+    """
+    out = dict(OPTION_DEFAULTS)
+    if settings is not None:
+        for key in OPTION_DEFAULTS:
+            value = settings.tool.get(key)
+            if isinstance(value, bool):
+                out[key] = value
+    return out
 
 
 # ------------------------------------------------------------------- reader --
@@ -106,6 +132,12 @@ def _parse_value(text: str):
         if len(text) < 2 or not text.endswith('"'):
             return None, f'unterminated string {text!r}'
         return _unescape(text[1:-1]), ''
+    if text in ('true', 'false'):
+        # Before the int attempt, and spelled TOML's way rather than
+        # Python's. _fmt_value has always written these -- bool is checked
+        # ahead of int there because it is a subclass -- so without this the
+        # writer emits a value its own reader calls a problem.
+        return text == 'true', ''
     if text.startswith('['):
         if not text.endswith(']'):
             return None, f'unterminated array {text!r}'

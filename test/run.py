@@ -1227,6 +1227,59 @@ def check_toml(no_numpy=False):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # The three per-project options live in the settings file, so a folder
+    # packs the way it asks to wherever it is opened. A flag still wins, and
+    # a flag must not write itself back -- a one-off run is not a decision
+    # about the folder.
+    tmp = tempfile.mkdtemp(prefix='toml-opts-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        rc, _o, _e = tool(['pack-terrain', build, os.path.join(tmp, 'a'),
+                           '--yes=setup.confirm', '--defaults'], no_numpy)
+        settled = settings_toml.load(build)
+        if rc or settled is None:
+            good = say(False, 'per-project options', 'the first pack failed')
+        else:
+            defaults = settings_toml.options_of(settled)
+            settled.tool['compress_spr'] = False
+            settled.tool['force'] = True
+            settings_toml.save(build, settled)
+            # No flags: the file decides.
+            _rc, out, err = tool(
+                ['pack-terrain', build, os.path.join(tmp, 'b')], no_numpy)
+            from_file = 'compress_spr off' in (out + err) and \
+                        'force on' in (out + err)
+            # A flag overrides and says so.
+            _rc2, out2, err2 = tool(
+                ['pack-terrain', build, os.path.join(tmp, 'c'),
+                 '--no-compress-spr'], no_numpy)
+            flagged = 'compress_spr off (flag)' in (out2 + err2)
+            # ...and neither run changed the file.
+            after = settings_toml.options_of(settings_toml.load(build))
+            unwritten = (after['compress_spr'] is False
+                         and after['force'] is True)
+            if defaults != {'recolour': False, 'compress_spr': True,
+                            'force': False}:
+                good = say(False, 'per-project options',
+                           f'wrong defaults: {defaults}')
+            elif not from_file:
+                good = say(False, 'per-project options',
+                           'the file did not drive the run')
+            elif not flagged:
+                good = say(False, 'per-project options',
+                           'a flag was not reported as an override')
+            elif not unwritten:
+                good = say(False, 'per-project options',
+                           f'a run wrote its flags back: {after}')
+            else:
+                good = say(True, 'per-project options',
+                           'file drives, flag overrides, nothing written '
+                           'back') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # An unanswered question must never block. stdin here is an open pipe that
     # nobody writes to -- a build server, or any run whose input is a pipe --
     # which never reaches EOF, so a question that waits on it waits for ever.

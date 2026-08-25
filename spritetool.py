@@ -14,7 +14,7 @@ import sys
 import os
 from pathlib import Path
 from typing import (Optional, BinaryIO, Dict, Tuple, List, Sequence,
-                    Callable, Mapping)
+                    Callable, Mapping, Set)
 
 try:
     from PIL import Image
@@ -4834,6 +4834,11 @@ class Options:
     jobs: int = 0
     #: Whether a worker may start a pool of its own for a large sprite.
     nested_jobs: bool = True
+    #: Option names a flag set outright on this command line. The terrain's
+    #: own settings fill in the rest, so a folder that asks to be recoloured
+    #: is recoloured without saying so again -- and a flag still wins, and
+    #: still writes nothing back.
+    explicit: Set[str] = dataclasses.field(default_factory=set)
     #: Questions settled ahead of time, by key. A key ending in a dot settles
     #: everything beneath it, which is what --defaults means: an opinion about
     #: borrowed art in general rather than about one piece of it.
@@ -4909,6 +4914,7 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
         if flag in PACK_FLAGS:
             field, value = PACK_FLAGS[flag]
             setattr(options, field, value)
+            options.explicit.add(field)
         elif flag not in PACK_ANSWERS:
             unknown.append(flag)
     if unknown:
@@ -5058,6 +5064,36 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                     f"Not packing {os.path.basename(source_dir)}: "
                     f"{settings_toml.SETTINGS_TOML_NAME} does not read: "
                     + '; '.join(toml.problems[:3]))
+            # The terrain's own answers, for anything a flag did not set
+            # outright. They belong to the folder rather than the machine --
+            # a terrain that has to be forced is that way wherever it is
+            # opened -- and a flag still wins and still writes nothing back,
+            # so a one-off run cannot quietly become the folder's answer.
+            # `recolour` is the file's name for what the flags call
+            # repalette: the terrain asking to be refitted every pack rather
+            # than asked about it once. The other two are named alike.
+            wanted = settings_toml.options_of(toml)
+            for _key, _field in (('recolour', 'repalette'),
+                                 ('compress_spr', 'compress_spr'),
+                                 ('force', 'force')):
+                if _field not in options.explicit:
+                    setattr(options, _field, wanted[_key])
+                    if _field == 'repalette' and wanted[_key]:
+                        # The flag settles the question as well as the field,
+                        # or the pack would still stop to ask.
+                        options.answers.setdefault('palette.repalette', True)
+            compress_spr = options.compress_spr
+            force = options.force
+            repalette = options.repalette
+            # What is in effect, not what the file said: a flag has already
+            # overridden the field by here, and printing the file's answer
+            # would report the opposite of what the run is about to do.
+            print('  settings: ' + ', '.join(
+                f'{_k} {"on" if getattr(options, _f) else "off"}'
+                + (' (flag)' if _f in options.explicit else '')
+                for _k, _f in (('compress_spr', 'compress_spr'),
+                               ('force', 'force'),
+                               ('recolour', 'repalette'))))
             if toml is None and not folder_settled(source_dir):
                 # Not set up yet, by either the TOML or the legacy marker it
                 # folds in. Any folder may be a terrain now -- the name no

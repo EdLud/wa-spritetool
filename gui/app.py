@@ -525,6 +525,9 @@ class Window(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1060, 720)
         self._folder = None
+        #: True while the Options menu is being ticked from a file, so the
+        #: toggled signal does not write the value straight back.
+        self._loading_options = False
         self._out_dir = None
         self._job = None
         #: Questions settled before packing, by key -- see _offer_setup.
@@ -672,6 +675,65 @@ class Window(QMainWindow):
         refresh.triggered.connect(lambda: self.refresh(announce=True))
         view.addAction(refresh)
         self._refresh_action = refresh
+
+        # Per-project, not per-machine: a terrain that has to be forced, or
+        # whose art is refitted every pack, is that way wherever it is
+        # opened, so these live in the folder's settings file beside
+        # everything else about it. Disabled until a folder is open, because
+        # without one there is nothing for them to belong to.
+        options = self.menuBar().addMenu('&Options')
+        self._option_actions = {}
+        for key, label, tip in (
+                ('recolour', 'Automatic re&colour on pack',
+                 'Fit every picture to one palette when packing, without '
+                 'asking each time'),
+                ('compress_spr', 'Compress &sprites',
+                 'Store sprites compressed, as the game ships them'),
+                ('force', '&Force',
+                 'Write the archive even when it would not load')):
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setStatusTip(tip)
+            act.setToolTip(tip)
+            act.setEnabled(False)
+            act.toggled.connect(
+                lambda on, k=key: self._set_option(k, on))
+            options.addAction(act)
+            self._option_actions[key] = act
+
+    def _set_option(self, key, on):
+        """Record one per-project choice, and write it where it belongs."""
+        if self._loading_options or not self._folder:
+            return
+        toml = settings_toml.load(self._folder)
+        if toml is None or toml.problems:
+            # Nothing to write into, or a file we could not read. Saying so
+            # is better than writing a fresh settings file over one that is
+            # merely unreadable to us.
+            self._say('err', f'  note: could not record {key}: '
+                             f'{settings_toml.SETTINGS_TOML_NAME} '
+                             f'{"is missing" if toml is None else "does not read"}')
+            self._show_options(self._folder)
+            return
+        toml.problems = []
+        toml.tool[key] = bool(on)
+        settings_toml.save(self._folder, toml)
+        self._say('out', f'{key} {"on" if on else "off"}')
+
+    def _show_options(self, folder):
+        """Tick the menu from the folder's settings file."""
+        wanted = settings_toml.options_of(
+            settings_toml.load(folder) if folder else None)
+        # Set without recording: setChecked fires toggled, which would write
+        # the value straight back and, on a folder with no settings file,
+        # report an error for a change nobody made.
+        self._loading_options = True
+        try:
+            for key, act in self._option_actions.items():
+                act.setEnabled(bool(folder))
+                act.setChecked(wanted[key])
+        finally:
+            self._loading_options = False
 
     # ------------------------------------------------------------ folder --
 
@@ -1065,6 +1127,7 @@ class Window(QMainWindow):
             f'Sprites ({sprites})' if not bad else f'Sprites ({bad} wrong)')
         for problem in self._sprites.problems:
             self._say('err', f'  note: {problem}')
+        self._show_options(folder)
         self._show_palette(os.path.join(folder, st.PALETTE_NAME))
         self._count_colours(rows, token)
 
