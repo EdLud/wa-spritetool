@@ -235,6 +235,28 @@ def _picture_colours(path):
     return None
 
 
+def _connect_steps(spin, handler):
+    """Call `handler(delta)` when a spin box is stepped, not merely changed.
+
+    QAbstractSpinBox.stepBy is what the arrows and the up/down keys go
+    through, and it is handed the number of steps -- which is exactly the
+    thing a multi-row edit needs and the thing valueChanged does not carry.
+    Wrapping it is more honest than watching values and inferring a
+    difference after the fact.
+    """
+    original = spin.stepBy
+
+    def stepBy(steps):
+        before = spin.value()
+        original(steps)
+        moved = spin.value() - before
+        if moved:
+            handler(moved)
+
+    spin.stepBy = stepBy
+    return spin
+
+
 def _centred(widget):
     """A cell widget that sits in the middle of its cell."""
     holder = QWidget()
@@ -245,7 +267,72 @@ def _centred(widget):
     return holder
 
 
-class ObjectTable(QTableWidget):
+class _MultiEdit:
+    """Applies one row's edit to every other selected row.
+
+    Selecting five objects and setting them all to `floor` should be one
+    action, not five. A checkbox or a choice is copied across as it stands;
+    a number is applied as the *step* that was just taken, so weights of 4
+    and 6 nudged up become 5 and 7 rather than both becoming 5. Their
+    relationship is usually the thing the author arranged on purpose.
+
+    Reentrancy matters: setting the other rows fires their own signals, which
+    would come back here and try to spread again. `_spreading` stops that.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # Cooperative: the mixin sits ahead of QTableWidget in the MRO, so
+        # the table's own arguments pass through rather than stopping here.
+        super().__init__(*args, **kwargs)
+        self._spreading = False
+
+    def _rows_with(self, row):
+        """The selected rows, when `row` is one of them. Otherwise just it."""
+        chosen = {i.row() for i in self.selectedIndexes()}
+        return sorted(chosen) if row in chosen and len(chosen) > 1 else [row]
+
+    def _spread(self, row, col, step=None):
+        """Apply row `row`'s column `col` to the rest of the selection.
+
+        `step` is how far a number moved, where the caller knows -- a spin
+        box reports that itself, so nothing here has to remember the value it
+        held a moment ago and guess.
+        """
+        if self._spreading:
+            return
+        source = self.cellWidget(row, col)
+        rows = self._rows_with(row)
+        if len(rows) > 1:
+            self._spreading = True
+            try:
+                for other in rows:
+                    if other == row:
+                        continue
+                    self._copy_cell(source, other, col, step)
+            finally:
+                self._spreading = False
+        self._touch()
+
+    def _copy_cell(self, source, row, col, step):
+        target = self.cellWidget(row, col)
+        if target is None:
+            return
+        if isinstance(source, QSpinBox) and isinstance(target, QSpinBox):
+            # By the step, not to the value: two rows set apart on purpose
+            # stay set apart.
+            if step:
+                target.setValue(target.value() + step)
+            return
+        if isinstance(source, QComboBox) and isinstance(target, QComboBox):
+            target.setCurrentIndex(source.currentIndex())
+            return
+        box = source.findChild(QCheckBox) if source else None
+        other = target.findChild(QCheckBox) if target else None
+        if box is not None and other is not None:
+            other.setChecked(box.isChecked())
+
+
+class ObjectTable(_MultiEdit, QTableWidget):
     """The six settings the guide gives every object, one row each.
 
     The lowest-risk useful thing a window can do that a text editor cannot:
@@ -269,6 +356,8 @@ class ObjectTable(QTableWidget):
         self.verticalHeader().setVisible(False)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectRows)
+        # Several rows at once, so one edit can settle a whole group.
+        self.setSelectionMode(QTableWidget.ExtendedSelection)
         head = self.horizontalHeader()
         head.setSectionResizeMode(0, QHeaderView.Stretch)
         for i in range(1, len(self.COLUMNS)):
@@ -348,25 +437,36 @@ class ObjectTable(QTableWidget):
             keep.setChecked(not excluded.get(stem.lower(), False))
             keep.setToolTip('Off leaves this object out of the next pack. '
                             'The picture stays in the folder.')
-            keep.stateChanged.connect(self._touch)
+            keep.stateChanged.connect(
+                lambda state, r=row: self._spread(r, self.COL_INCLUDE))
             self.setCellWidget(row, self.COL_INCLUDE, _centred(keep))
 
             weight = QSpinBox()
             weight.setRange(1, 10)
             weight.setValue(values[0])
+            # Two signals, because they mean different things. A press on
+            # the arrows is a step, and every selected row should move by it.
+            # Typing a number outright is not a step -- there is nothing to
+            # move the others by -- so it only marks the table dirty.
+            weight.setKeyboardTracking(False)
             weight.valueChanged.connect(self._touch)
+            _connect_steps(weight,
+                           lambda by, r=row: self._spread(r, self.COL_WEIGHT,
+                                                          by))
             self.setCellWidget(row, self.COL_WEIGHT, weight)
 
             for col, idx in zip(self.COL_FLAGS, (1, 2, 3, 4)):
                 box = QCheckBox()
                 box.setChecked(bool(values[idx]))
-                box.stateChanged.connect(self._touch)
+                box.stateChanged.connect(
+                    lambda state, r=row, c=col: self._spread(r, c))
                 self.setCellWidget(row, col, _centred(box))
 
             where = QComboBox()
             where.addItems(self.WHERE)
             where.setCurrentIndex(min(values[5], 3))
-            where.currentIndexChanged.connect(self._touch)
+            where.currentIndexChanged.connect(
+                lambda index, r=row: self._spread(r, self.COL_WHERE))
             self.setCellWidget(row, self.COL_WHERE, where)
 
         self._dirty = False
@@ -425,7 +525,7 @@ class ObjectTable(QTableWidget):
         return path
 
 
-class SpriteTable(QTableWidget):
+class SpriteTable(_MultiEdit, QTableWidget):
     """The sprite record: what a sheet of frames says about itself.
 
     A sheet is one tall picture and says nothing about how it is cut up, so
@@ -467,6 +567,7 @@ class SpriteTable(QTableWidget):
         self.verticalHeader().setVisible(False)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectRows)
+        self.setSelectionMode(QTableWidget.ExtendedSelection)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         head = self.horizontalHeader()
         head.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -543,14 +644,16 @@ class SpriteTable(QTableWidget):
                 play.setCurrentIndex(len(self.PLAYBACK))
             else:
                 play.setCurrentIndex(int(flags))
-            play.currentIndexChanged.connect(self._touch)
+            play.currentIndexChanged.connect(
+                lambda index, rr=r: self._spread(rr, self.COL_PLAYBACK))
             self.setCellWidget(r, self.COL_PLAYBACK, play)
 
             keep = QCheckBox()
             keep.setChecked(not excluded.get(name.lower(), False))
             keep.setToolTip('Off leaves this sprite out of the next pack. '
                             'The picture stays in the folder.')
-            keep.stateChanged.connect(self._touch)
+            keep.stateChanged.connect(
+                lambda state, rr=r: self._spread(rr, self.COL_INCLUDE))
             self.setCellWidget(r, self.COL_INCLUDE, _centred(keep))
 
             if row['problem']:

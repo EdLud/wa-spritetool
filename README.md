@@ -106,6 +106,12 @@ frame count is not a crash, it is art sliced in the wrong places -- and the
 same check runs when a folder is set up, so every wrong record is reported at
 once rather than one per failed build.
 
+Both tables take **several rows at once**: select them and one edit settles
+the lot. A checkbox or a dropdown is copied across as it stands; the weight
+spinner moves each row *by the step you took*, so 4 and 6 nudged up become 5
+and 7 rather than both becoming 5 -- the gap between them is usually there on
+purpose.
+
 **Include** is on by default. Switch it off and that object or sprite is left
 out of the next pack, along with its `.inf` and its line in `index.txt`. The
 picture stays in the folder, so it is a way to try a terrain without
