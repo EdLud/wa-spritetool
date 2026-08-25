@@ -1377,6 +1377,55 @@ def check_toml(no_numpy=False):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # Switching an object or sprite off leaves it out of the next pack --
+    # the entry, and for an object the .inf and the index.txt line with it.
+    # Naming something in index.txt that the archive does not hold is how a
+    # terrain crashes on the generator screen, so the three have to agree.
+    tmp = tempfile.mkdtemp(prefix='toml-exclude-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        rc, _o, _e = tool(['pack-terrain', build, os.path.join(tmp, 'a'),
+                           '--yes=setup.confirm', '--defaults'], no_numpy)
+        settled = settings_toml.load(build)
+        if rc or settled is None:
+            good = say(False, 'switched-off entries', 'the first pack failed')
+        else:
+            settled.excluded = {'obj-ceil-drip': True}
+            settings_toml.save(build, settled)
+            out = os.path.join(tmp, 'b')
+            rc2, o2, e2 = tool(['pack-terrain', build, out], no_numpy)
+            dec = os.path.join(tmp, 'dec')
+            rc3, _o3, _e3 = tool(
+                ['decompress', os.path.join(out, 'Level.dir'), dec], no_numpy)
+            here = (os.listdir(os.path.join(dec, 'Level'))
+                    if not rc3 and os.path.isdir(os.path.join(dec, 'Level'))
+                    else [])
+            index = ''
+            index_path = os.path.join(dec, 'Level', 'index.txt')
+            if os.path.exists(index_path):
+                with open(index_path, encoding='latin-1') as fh:
+                    index = fh.read()
+            left = [f for f in here if f.lower().startswith('obj-ceil-drip')]
+            if rc2 or rc3:
+                good = say(False, 'switched-off entries',
+                           _tail(o2 + e2) or 'the pack or decompress failed')
+            elif left:
+                good = say(False, 'switched-off entries',
+                           f'still in the archive: {left}')
+            elif 'obj-ceil-drip' in index:
+                good = say(False, 'switched-off entries',
+                           'index.txt still names it')
+            elif 'obj-floor-rock' not in index:
+                good = say(False, 'switched-off entries',
+                           'the other objects went too')
+            else:
+                good = say(True, 'switched-off entries',
+                           'entry, .inf and index.txt line all gone') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # An unanswered question must never block. stdin here is an open pipe that
     # nobody writes to -- a build server, or any run whose input is a pipe --
     # which never reaches EOF, so a question that waits on it waits for ever.

@@ -112,11 +112,9 @@ class DropZone(QFrame):
     #: Said in the label when nothing has been dropped, and as the tooltip
     #: wherever the zone is described. One sentence per thing that can be
     #: dropped, because the two do opposite jobs.
-    IDLE_TEXT = 'Drop a terrain build folder, or a .dir archive'
-    IDLE_TIP = ('A build folder is packed into a terrain.\n'
-                'A .dir archive is taken apart: you pick where it goes, '
-                'then whether to extract its files as they are stored or '
-                'decompress them into editable pictures.')
+    IDLE_TEXT = 'Drop a folder to build a terrain, or a .dir archive to extract it.'
+    IDLE_TIP = ('A folder is prepared as a terrain project.\n'
+                'A .dir archive is decompressed and its contents written to a folder.')
 
     def show_folder(self, folder):
         if not folder:
@@ -237,7 +235,94 @@ def _picture_colours(path):
     return None
 
 
-class ObjectTable(QTableWidget):
+def _centred(widget):
+    """A cell widget that sits in the middle of its cell."""
+    holder = QWidget()
+    lay = QHBoxLayout(holder)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setAlignment(Qt.AlignCenter)
+    lay.addWidget(widget)
+    return holder
+
+
+class _MultiEdit:
+    """Applies one row's edit to every other selected row.
+
+    Selecting five objects and setting them all to `floor` should be one
+    action, not five. A checkbox or a choice is copied across as it stands;
+    a number is applied as the *step* that was just taken, so weights of 4
+    and 6 nudged up become 5 and 7 rather than both becoming 5. Their
+    relationship is usually the thing the author arranged on purpose.
+
+    Reentrancy matters: setting the other rows fires their own signals, which
+    would come back here and try to spread again. `_spreading` stops that.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # Cooperative: the mixin sits ahead of QTableWidget in the MRO, so
+        # the table's own arguments pass through rather than stopping here.
+        super().__init__(*args, **kwargs)
+        self._spreading = False
+        #: Last value seen per (row, column), so a spin box's change can be
+        #: read as a step rather than a destination.
+        self._was = {}
+
+    def _rows_with(self, row):
+        """The selected rows, when `row` is one of them. Otherwise just it."""
+        chosen = {i.row() for i in self.selectedIndexes()}
+        return sorted(chosen) if row in chosen and len(chosen) > 1 else [row]
+
+    def _spread(self, row, col):
+        if self._spreading:
+            return
+        source = self.cellWidget(row, col)
+        rows = self._rows_with(row)
+        step = None
+        if isinstance(source, QSpinBox):
+            before = self._was.get((row, col), source.value())
+            step = source.value() - before
+        self._was[(row, col)] = (source.value()
+                                 if isinstance(source, QSpinBox) else None)
+        if len(rows) > 1:
+            self._spreading = True
+            try:
+                for other in rows:
+                    if other == row:
+                        continue
+                    self._copy_cell(source, other, col, step)
+            finally:
+                self._spreading = False
+        self._touch()
+
+    def _copy_cell(self, source, row, col, step):
+        target = self.cellWidget(row, col)
+        if target is None:
+            return
+        if isinstance(source, QSpinBox) and isinstance(target, QSpinBox):
+            # By the step, not to the value: two rows set apart on purpose
+            # stay set apart.
+            if step:
+                target.setValue(target.value() + step)
+            return
+        if isinstance(source, QComboBox) and isinstance(target, QComboBox):
+            target.setCurrentIndex(source.currentIndex())
+            return
+        box = source.findChild(QCheckBox) if source else None
+        other = target.findChild(QCheckBox) if target else None
+        if box is not None and other is not None:
+            other.setChecked(box.isChecked())
+
+    def _remember_values(self):
+        """Note every spin box, so the first change reads as a step."""
+        self._was = {}
+        for row in range(self.rowCount()):
+            for col in range(self.columnCount()):
+                widget = self.cellWidget(row, col)
+                if isinstance(widget, QSpinBox):
+                    self._was[(row, col)] = widget.value()
+
+
+class ObjectTable(_MultiEdit, QTableWidget):
     """The six settings the guide gives every object, one row each.
 
     The lowest-risk useful thing a window can do that a text editor cannot:
@@ -245,9 +330,15 @@ class ObjectTable(QTableWidget):
     named choices instead of a column of digits.
     """
 
-    COLUMNS = ('Object', 'Weight', 'In front', 'Soil', 'Collision',
+    COLUMNS = ('Object', 'Include', 'Weight', 'In front', 'Soil', 'Collision',
                'No stacking', 'Location')
     WHERE = ('side (left)', 'side (right)', 'ceiling', 'floor')
+
+    #: Which column holds what, so the row-building and the reading agree
+    #: without counting on their fingers.
+    COL_NAME, COL_INCLUDE, COL_WEIGHT = 0, 1, 2
+    COL_FLAGS = (3, 4, 5, 6)          # front, soil, collide, nostack
+    COL_WHERE = 7
 
     def __init__(self):
         super().__init__(0, len(self.COLUMNS))
@@ -255,6 +346,8 @@ class ObjectTable(QTableWidget):
         self.verticalHeader().setVisible(False)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectRows)
+        # Several rows at once, so one edit can settle a whole group.
+        self.setSelectionMode(QTableWidget.ExtendedSelection)
         head = self.horizontalHeader()
         head.setSectionResizeMode(0, QHeaderView.Stretch)
         for i in range(1, len(self.COLUMNS)):
@@ -286,8 +379,10 @@ class ObjectTable(QTableWidget):
         # object, and the table would show defaults it then saves over the
         # author's real settings.
         settings = {}
+        excluded = {}
         toml = settings_toml.load(folder)
         if toml is not None:
+            excluded = dict(toml.excluded)
             if toml.problems:
                 self.problems = toml.problems
                 return 0
@@ -318,31 +413,38 @@ class ObjectTable(QTableWidget):
             values = settings.get(stem.lower(), list(st.DEFAULT_INF))
             name = QTableWidgetItem(stem)
             name.setFlags(name.flags() & ~Qt.ItemIsEditable)
-            self.setItem(row, 0, name)
+            self.setItem(row, self.COL_NAME, name)
+
+            keep = QCheckBox()
+            keep.setChecked(not excluded.get(stem.lower(), False))
+            keep.setToolTip('Off leaves this object out of the next pack. '
+                            'The picture stays in the folder.')
+            keep.stateChanged.connect(
+                lambda state, r=row: self._spread(r, self.COL_INCLUDE))
+            self.setCellWidget(row, self.COL_INCLUDE, _centred(keep))
 
             weight = QSpinBox()
             weight.setRange(1, 10)
             weight.setValue(values[0])
-            weight.valueChanged.connect(self._touch)
-            self.setCellWidget(row, 1, weight)
+            weight.valueChanged.connect(
+                lambda value, r=row: self._spread(r, self.COL_WEIGHT))
+            self.setCellWidget(row, self.COL_WEIGHT, weight)
 
-            for col, idx in ((2, 1), (3, 2), (4, 3), (5, 4)):
+            for col, idx in zip(self.COL_FLAGS, (1, 2, 3, 4)):
                 box = QCheckBox()
                 box.setChecked(bool(values[idx]))
-                box.stateChanged.connect(self._touch)
-                holder = QWidget()
-                lay = QHBoxLayout(holder)
-                lay.setContentsMargins(0, 0, 0, 0)
-                lay.setAlignment(Qt.AlignCenter)
-                lay.addWidget(box)
-                self.setCellWidget(row, col, holder)
+                box.stateChanged.connect(
+                    lambda state, r=row, c=col: self._spread(r, c))
+                self.setCellWidget(row, col, _centred(box))
 
             where = QComboBox()
             where.addItems(self.WHERE)
             where.setCurrentIndex(min(values[5], 3))
-            where.currentIndexChanged.connect(self._touch)
-            self.setCellWidget(row, 6, where)
+            where.currentIndexChanged.connect(
+                lambda index, r=row: self._spread(r, self.COL_WHERE))
+            self.setCellWidget(row, self.COL_WHERE, where)
 
+        self._remember_values()
         self._dirty = False
         return len(objects)
 
@@ -356,13 +458,26 @@ class ObjectTable(QTableWidget):
         """[(stem, six values)], in the table's order."""
         out = []
         for row in range(self.rowCount()):
-            stem = self.item(row, 0).text()
-            vals = [self.cellWidget(row, 1).value()]
-            for col in (2, 3, 4, 5):
+            stem = self.item(row, self.COL_NAME).text()
+            vals = [self.cellWidget(row, self.COL_WEIGHT).value()]
+            for col in self.COL_FLAGS:
                 box = self.cellWidget(row, col).findChild(QCheckBox)
                 vals.append(1 if box.isChecked() else 0)
-            vals.append(self.cellWidget(row, 6).currentIndex())
+            vals.append(self.cellWidget(row, self.COL_WHERE).currentIndex())
             out.append((stem, vals))
+        return out
+
+    def excluded(self):
+        """{stem: True} for every object switched off. Only the offs.
+
+        A folder that has never switched anything off writes no table at all,
+        so the file says nothing rather than listing every object as kept.
+        """
+        out = {}
+        for row in range(self.rowCount()):
+            box = self.cellWidget(row, self.COL_INCLUDE).findChild(QCheckBox)
+            if box is not None and not box.isChecked():
+                out[self.item(row, self.COL_NAME).text().lower()] = True
         return out
 
     def save(self, folder):
@@ -374,12 +489,19 @@ class ObjectTable(QTableWidget):
         toml = settings_toml.load(folder) or settings_toml.TerrainSettings()
         toml.problems = []
         toml.objects = {stem: list(values) for stem, values in self.values()}
+        # Only this table's names, so a sprite switched off on the other tab
+        # is not forgotten by an object save.
+        mine = {self.item(r, self.COL_NAME).text().lower()
+                for r in range(self.rowCount())}
+        toml.excluded = {k: v for k, v in toml.excluded.items()
+                         if k not in mine}
+        toml.excluded.update(self.excluded())
         path = settings_toml.save(folder, toml)
         self._dirty = False
         return path
 
 
-class SpriteTable(QTableWidget):
+class SpriteTable(_MultiEdit, QTableWidget):
     """The sprite record: what a sheet of frames says about itself.
 
     A sheet is one tall picture and says nothing about how it is cut up, so
@@ -404,7 +526,10 @@ class SpriteTable(QTableWidget):
     the file and written back untouched -- hidden, not dropped.
     """
 
-    COLUMNS = ('Sprite', 'Frames', 'Cell', 'Sheet', 'Playback', 'Record')
+    COLUMNS = ('Sprite', 'Include', 'Frames', 'Cell', 'Sheet', 'Playback',
+               'Record')
+
+    COL_NAME, COL_INCLUDE, COL_PLAYBACK = 0, 1, 5
 
     #: flags, from the terrain guide. The index is the value.
     PLAYBACK = ('play once and stop',
@@ -418,6 +543,7 @@ class SpriteTable(QTableWidget):
         self.verticalHeader().setVisible(False)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectRows)
+        self.setSelectionMode(QTableWidget.ExtendedSelection)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         head = self.horizontalHeader()
         head.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -439,6 +565,8 @@ class SpriteTable(QTableWidget):
         self.setRowCount(0)
         self.problems = []
         self._records = {}
+        settled = settings_toml.load(folder)
+        excluded = dict(settled.excluded) if settled else {}
         try:
             rows = st.sprite_records(folder)
         except Exception as exc:
@@ -454,7 +582,7 @@ class SpriteTable(QTableWidget):
             cell = ('--' if row['width'] is None or row['height'] is None
                     else f"{row['width']}x{row['height']}")
             sheet = '--' if size is None else f'{size[0]}x{size[1]}'
-            cells = [name,
+            cells = [name, None,
                      '--' if row['frames'] is None else str(row['frames']),
                      cell, sheet, None,
                      row['source'] or 'none']
@@ -484,11 +612,21 @@ class SpriteTable(QTableWidget):
                 play.setCurrentIndex(len(self.PLAYBACK))
             else:
                 play.setCurrentIndex(int(flags))
-            play.currentIndexChanged.connect(self._touch)
-            self.setCellWidget(r, 4, play)
+            play.currentIndexChanged.connect(
+                lambda index, rr=r: self._spread(rr, self.COL_PLAYBACK))
+            self.setCellWidget(r, self.COL_PLAYBACK, play)
+
+            keep = QCheckBox()
+            keep.setChecked(not excluded.get(name.lower(), False))
+            keep.setToolTip('Off leaves this sprite out of the next pack. '
+                            'The picture stays in the folder.')
+            keep.stateChanged.connect(
+                lambda state, rr=r: self._spread(rr, self.COL_INCLUDE))
+            self.setCellWidget(r, self.COL_INCLUDE, _centred(keep))
 
             if row['problem']:
                 self.problems.append(f"{name}: {row['problem']}")
+        self._remember_values()
         self._dirty = False
         return len(rows)
 
@@ -512,14 +650,22 @@ class SpriteTable(QTableWidget):
             return None
         toml.problems = []
         for r in range(self.rowCount()):
-            name = self.item(r, 0).text()
+            name = self.item(r, self.COL_NAME).text()
             if name not in toml.sprites:
                 continue
-            widget = self.cellWidget(r, 4)
+            widget = self.cellWidget(r, self.COL_PLAYBACK)
             idx = widget.currentIndex()
             if idx >= len(self.PLAYBACK):
                 continue                # the unknown value, left as it was
             toml.sprites[name]['flags'] = idx
+        mine = {self.item(r, self.COL_NAME).text().lower()
+                for r in range(self.rowCount())}
+        toml.excluded = {k: v for k, v in toml.excluded.items()
+                         if k not in mine}
+        for r in range(self.rowCount()):
+            box = self.cellWidget(r, self.COL_INCLUDE).findChild(QCheckBox)
+            if box is not None and not box.isChecked():
+                toml.excluded[self.item(r, self.COL_NAME).text().lower()] = True
         path = settings_toml.save(folder, toml)
         self._dirty = False
         return path
@@ -585,17 +731,14 @@ class Window(QMainWindow):
         #: folder knows to stop rather than write into the new one's rows.
         self._load_token = 0
 
+        # No Save button on the tab. File > Save (Cmd+S) writes both tables,
+        # and a button per tab suggested each was saved on its own -- which
+        # was never true, and is less true now that one project holds them.
         self._objects = ObjectTable()
-        save_objects = QPushButton(f'Save {settings_toml.SETTINGS_TOML_NAME}')
-        save_objects.clicked.connect(self._save_objects)
         obj_page = QWidget()
         obj_box = QVBoxLayout(obj_page)
         obj_box.setContentsMargins(0, 0, 0, 0)
         obj_box.addWidget(self._objects)
-        obj_row = QHBoxLayout()
-        obj_row.addStretch(1)
-        obj_row.addWidget(save_objects)
-        obj_box.addLayout(obj_row)
 
         self._palette = QLabel('Pack once with the palette sheet to see it.')
         self._palette.setAlignment(Qt.AlignCenter)
@@ -615,16 +758,10 @@ class Window(QMainWindow):
         self._changed.setRootIsDecorated(False)
 
         self._sprites = SpriteTable()
-        save_sprites = QPushButton(f'Save {settings_toml.SETTINGS_TOML_NAME}')
-        save_sprites.clicked.connect(self._save_sprites)
         spr_page = QWidget()
         spr_box = QVBoxLayout(spr_page)
         spr_box.setContentsMargins(0, 0, 0, 0)
         spr_box.addWidget(self._sprites)
-        spr_row = QHBoxLayout()
-        spr_row.addStretch(1)
-        spr_row.addWidget(save_sprites)
-        spr_box.addLayout(spr_row)
         self._spr_page = spr_page
 
         tabs = QTabWidget()
@@ -1593,7 +1730,7 @@ class Window(QMainWindow):
         box.setInformativeText(
             'Extract writes the files exactly as the archive stores them.\n\n'
             'Decompress writes those files and decodes every picture to a '
-            'BMP you can edit, with a .spd beside each sprite.')
+            'BMP with a .spd beside each sprite.')
         decompress = box.addButton('Decompress', QMessageBox.AcceptRole)
         extract = box.addButton('Extract', QMessageBox.AcceptRole)
         box.addButton('Cancel', QMessageBox.RejectRole)
@@ -1613,10 +1750,10 @@ class Window(QMainWindow):
             gbox.setIcon(QMessageBox.Question)
             gbox.setWindowTitle(APP_NAME)
             gbox.setText('Write an animated GIF for each sprite?')
-            gbox.setInformativeText(
-                'A preview of every animation, beside the decoded art. It is '
-                'the slow part -- a shipped Water.dir takes about twenty '
-                'seconds -- and nothing needs them to pack again.')
+            # gbox.setInformativeText(
+            #     'A preview of every animation, beside the decoded art. It is '
+            #     'the slow part -- a shipped Water.dir takes about twenty '
+            #     'seconds -- and nothing needs them to pack again.')
             no = gbox.addButton('No', QMessageBox.NoRole)
             yes = gbox.addButton('Write GIFs', QMessageBox.YesRole)
             gbox.addButton('Cancel', QMessageBox.RejectRole)

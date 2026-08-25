@@ -5265,6 +5265,35 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                 stem = 'Level'
                 for note in scan_notes:
                     print(f'  note: {note}', file=sys.stderr)
+                # Anything the author has switched off. Filtered here, before
+                # index.txt is built from the objects, so a left-out object is
+                # absent from the archive and from the list the game reads --
+                # naming it in one but not the other is how a terrain crashes
+                # on the generator screen.
+                left_out = {k.lower() for k, v in
+                            (toml.excluded.items() if toml else ())
+                            if v}
+                if left_out:
+                    def _kept(entry):
+                        # .inf as well as the pictures: a folder that still
+                        # has SpriteEditor-era files gets them scanned in as
+                        # entries of their own, so stripping only .img and
+                        # .spr leaves the settings of an object whose picture
+                        # was just dropped.
+                        stem_of = entry
+                        for ext in ('.img', '.spr', '.inf'):
+                            if stem_of.lower().endswith(ext):
+                                stem_of = stem_of[:-4]
+                                break
+                        return stem_of.lower() not in left_out
+                    before = len(names)
+                    names = [n for n in names if _kept(n)]
+                    _objects = [o for o in _objects
+                                if o.lower() not in left_out]
+                    if before != len(names):
+                        print(f'  note: leaving out {before - len(names)} '
+                              f'entr{"y" if before - len(names) == 1 else "ies"}'
+                              f' switched off in the settings')
                 synthetic['index.txt'] = ''.join(
                     f'{o}\r\n' for o in _objects).encode('latin-1')
                 obj_settings, trouble = _settle_object_settings(
@@ -5322,6 +5351,10 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                             print(f"  note: {row['name']}: {row['problem']}",
                                   file=sys.stderr)
                 for stem, values in obj_settings.items():
+                    # Not for an object that was left out: its .inf would be
+                    # an entry describing a picture the archive does not hold.
+                    if stem.lower() in left_out:
+                        continue
                     synthetic[f'{stem}.inf'] = format_inf(values)
                 first_run = not folder_settled(source_dir) or offer_defaults
                 if first_run:

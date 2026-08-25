@@ -58,6 +58,12 @@ OBJECT_DEFAULT = (5, 0, 0, 1, 1, 3)
 # A sprite's geometry and playback, mirroring the .spr.spd fields.
 SPRITE_KEYS = ('frames', 'width', 'height', 'framerate', 'flags')
 
+#: Names the author has asked to leave out of the next pack, as one table
+#: rather than a key inside each object's. The six OBJECT_KEYS are the .inf
+#: fields the game itself reads, and adding a seventh the game knows nothing
+#: about would blur what that table is. This is the tool's own business.
+EXCLUDE_TABLE = 'exclude'
+
 # The tool's own bookkeeping keys under [spritetool].
 TOOL_KEYS = ('created', 'borrowed', 'last_output',
              'recolour', 'compress_spr', 'force')
@@ -81,6 +87,9 @@ class TerrainSettings:
     """
     objects: Dict[str, List[int]] = field(default_factory=dict)
     sprites: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    #: name -> True for anything to leave out of the next pack. Absent means
+    #: included, so a folder that has never excluded anything says nothing.
+    excluded: Dict[str, bool] = field(default_factory=dict)
     tool: Dict[str, object] = field(default_factory=dict)
     problems: List[str] = field(default_factory=list)
 
@@ -288,6 +297,14 @@ def load_path(path: str) -> Optional[TerrainSettings]:
                     settings.problems.append(
                         f'[{table}] {key}: expected a number, got {v!r}')
             settings.sprites[name] = rec
+        elif table == EXCLUDE_TABLE:
+            for key, value in entries.items():
+                if isinstance(value, bool):
+                    settings.excluded[key] = value
+                else:
+                    settings.problems.append(
+                        f'[{EXCLUDE_TABLE}] {key}: expected true or false, '
+                        f'got {value!r}')
         else:
             settings.problems.append(f'unknown table [{table}]')
     return settings
@@ -341,6 +358,13 @@ def to_toml(settings: TerrainSettings) -> str:
         lines.append(f'[object.{stem}]')
         for key, value in zip(OBJECT_KEYS, settings.objects[stem]):
             lines.append(f'{key} = {_fmt_value(value)}')
+        lines.append('')
+    left_out = sorted((k for k, v in settings.excluded.items() if v),
+                      key=str.lower)
+    if left_out:
+        lines.append(f'[{EXCLUDE_TABLE}]')
+        for name in left_out:
+            lines.append(f'{name} = true')
         lines.append('')
     for name in sorted(settings.sprites, key=str.lower):
         lines.append(f'[sprite.{name}]')
@@ -397,6 +421,7 @@ class Project:
         settings = settings if settings is not None else TerrainSettings()
         self.objects = settings.objects
         self.sprites = settings.sprites
+        self.excluded = settings.excluded
         self.tool = settings.tool
         self.problems = list(settings.problems)
         #: Settings describing art that is no longer in the folder. Kept, so
@@ -431,7 +456,8 @@ class Project:
     def as_settings(self) -> TerrainSettings:
         """The plain record this project would be written as."""
         return TerrainSettings(objects=self.objects, sprites=self.sprites,
-                               tool=self.tool, problems=list(self.problems))
+                               excluded=self.excluded, tool=self.tool,
+                               problems=list(self.problems))
 
     # -- opening and saving --------------------------------------------
 

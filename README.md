@@ -94,13 +94,25 @@ changes.
 
 The window's tabs show the folder's files and their colours, the objects'
 placement settings, the sprite records, the shared palette, and what packing
-changed. The **Sprites** tab is where a sheet's record lives: a sprite is one
+changed. Neither table has a Save button: File > Save writes both.
+The **Sprites** tab is where a sheet's record lives: a sprite is one
 tall picture and says nothing about how it is cut into frames, so the frame
 count and cell size are carried in `settings.spritetool.toml`. A record that
 does not match its sheet is marked in the row and named in the log -- a wrong
 frame count is not a crash, it is art sliced in the wrong places -- and the
 same check runs when a folder is set up, so every wrong record is reported at
 once rather than one per failed build.
+
+Both tables take **several rows at once**: select them and one edit settles
+the lot. A checkbox or a dropdown is copied across as it stands; the weight
+spinner moves each row *by the step you took*, so 4 and 6 nudged up become 5
+and 7 rather than both becoming 5 -- the gap between them is usually there on
+purpose.
+
+**Include** is on by default. Switch it off and that object or sprite is left
+out of the next pack, along with its `.inf` and its line in `index.txt`. The
+picture stays in the folder, so it is a way to try a terrain without
+something rather than a way to delete it.
 
 **Playback** is the one field there you can freely choose, so it is a named
 choice rather than a number: play once and stop, loop, forwards then

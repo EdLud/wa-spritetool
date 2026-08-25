@@ -332,6 +332,18 @@ SpriteEditor writes).
   `load`/`save` take a folder and use the first candidate. The window asks
   which; the CLI refuses with a one-based list and takes `--project=N` or
   `--project=NAME`.
+- `[exclude]` in the settings file names what to leave out of the next pack,
+  as one table of `name = true` rather than a seventh key inside each
+  object's. The six `OBJECT_KEYS` are the `.inf` fields the game itself
+  reads; this is the tool's own business. The packer filters the scan before
+  `index.txt` is built from it, and skips the synthetic `.inf` too -- an
+  index naming an entry the archive does not hold crashes the game on the
+  generator screen.
+- Both GUI tables mix in `_MultiEdit`: an edit on a selected row is applied
+  to every other selected row. Checkboxes and dropdowns copy as they stand;
+  a spin box applies the *step* rather than the value, so rows deliberately
+  set apart stay apart. `_spreading` guards the reentrancy, since setting the
+  other rows fires their signals in turn.
 - `settings_toml.Project` holds a terrain's settings in memory. The tables
   edit it and set one `dirty`, rather than each writing its own file --
   there were three separate dirty flags before, and two guards that had to be
