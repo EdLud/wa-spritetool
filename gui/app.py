@@ -400,8 +400,16 @@ class ObjectTable(_MultiEdit, QTableWidget):
     def dirty(self):
         return self._dirty
 
-    def load(self, folder):
-        """Read the folder's objects and whatever settings they have."""
+    def load(self, folder, keep=None):
+        """Read the folder's objects and whatever settings they have.
+
+        `keep` is the settings to use instead of the file's: what the table
+        already holds, handed back on a refresh. The folder is re-read for
+        its pictures -- that is what a refresh is for -- but the settings are
+        the session's, so an edit made here is not undone by a file that has
+        not been saved to yet. Editing the file by hand mid-session is not a
+        thing the window tries to notice.
+        """
         self.setRowCount(0)
         self._dirty = False
         self.problems = []
@@ -420,7 +428,7 @@ class ObjectTable(_MultiEdit, QTableWidget):
         # author's real settings.
         settings = {}
         excluded = {}
-        toml = settings_toml.load(folder)
+        toml = keep if keep is not None else settings_toml.load(folder)
         if toml is not None:
             excluded = dict(toml.excluded)
             if toml.problems:
@@ -600,15 +608,23 @@ class SpriteTable(_MultiEdit, QTableWidget):
     def dirty(self):
         return self._dirty
 
-    def load(self, folder):
-        """Fill from `folder`. Returns the number of sprites found."""
+    def load(self, folder, keep=None):
+        """Fill from `folder`. Returns the number of sprites found.
+
+        `keep` is the settings to use instead of the file's -- see
+        ObjectTable.load. The sheets are measured again; the records are the
+        session's.
+        """
         self.setRowCount(0)
         self.problems = []
         self._records = {}
-        settled = settings_toml.load(folder)
+        settled = keep if keep is not None else settings_toml.load(folder)
         excluded = dict(settled.excluded) if settled else {}
         try:
-            rows = st.sprite_records(folder)
+            # The session's records, not the file's: sprite_records reads
+            # the settings file when given nothing, which on a refresh would
+            # undo a playback change that has not been saved yet.
+            rows = st.sprite_records(folder, settled)
         except Exception as exc:
             self.problems = [str(exc)]
             self._dirty = False
@@ -1362,7 +1378,43 @@ class Window(QMainWindow):
         if folder:
             self._set_out(folder)
 
-    def _load_folder(self, folder):
+    def _session_settings(self):
+        """What the tables hold now, as a TerrainSettings.
+
+        Built from the widgets rather than read back from disk, so it is the
+        session's answer even where nothing has been saved. The file is for
+        loading and saving; between those two moments the window is the
+        source of truth, and a hand edit to the file mid-session is not
+        something it tries to notice.
+        """
+        settled = settings_toml.load(self._folder) if self._folder else None
+        settled = settled or settings_toml.TerrainSettings()
+        settled.problems = []
+        if self._objects.rowCount():
+            settled.objects = {stem.lower(): list(values)
+                               for stem, values in self._objects.values()}
+        excluded = dict(settled.excluded)
+        if self._objects.rowCount():
+            mine = {self._objects.item(r, self._objects.COL_NAME).text().lower()
+                    for r in range(self._objects.rowCount())}
+            excluded = {k: v for k, v in excluded.items() if k not in mine}
+            excluded.update(self._objects.excluded())
+        for r in range(self._sprites.rowCount()):
+            name = self._sprites.item(r, self._sprites.COL_NAME).text()
+            box = self._sprites.cellWidget(
+                r, self._sprites.COL_INCLUDE).findChild(QCheckBox)
+            excluded.pop(name.lower(), None)
+            if box is not None and not box.isChecked():
+                excluded[name.lower()] = True
+            widget = self._sprites.cellWidget(r, self._sprites.COL_PLAYBACK)
+            if name in settled.sprites and widget is not None:
+                idx = widget.currentIndex()
+                if idx < len(self._sprites.PLAYBACK):
+                    settled.sprites[name]['flags'] = idx
+        settled.excluded = excluded
+        return settled
+
+    def _load_folder(self, folder, reuse=False):
         self._files.clear()
         try:
             names = sorted(os.listdir(folder))
@@ -1415,7 +1467,11 @@ class Window(QMainWindow):
                 rows.append((item, path))
         self._files.setSortingEnabled(True)
 
-        count = self._objects.load(folder)
+        # On a refresh the settings are the session's, not the file's: the
+        # folder is re-read for its pictures, which is the point, but an edit
+        # made in the window and not yet saved must survive it.
+        keep = self._session_settings() if reuse else None
+        count = self._objects.load(folder, keep)
         self._tabs.setTabText(self._tabs.indexOf(self._obj_page),
                               f'Objects ({count})' if count else 'Objects')
         for problem in self._objects.problems:
@@ -1426,7 +1482,7 @@ class Window(QMainWindow):
         # sliced in the wrong places -- so the count carries how many did not
         # add up, and each is said once in the log where the packer's other
         # notes go.
-        sprites = self._sprites.load(folder)
+        sprites = self._sprites.load(folder, keep)
         bad = len(self._sprites.problems)
         self._tabs.setTabText(
             self._tabs.indexOf(self._spr_page),
@@ -1645,27 +1701,11 @@ class Window(QMainWindow):
             if announce:
                 self._say('err', 'not refreshing: a job is running')
             return
-        if self._objects.dirty or self._sprites.dirty:
-            # A table is about to be re-read from disk, which would drop
-            # edits that are not in the file yet. Silently is the wrong way
-            # to do that.
-            what = ' and '.join(
-                [n for n, t in (('object', self._objects),
-                                ('sprite', self._sprites)) if t.dirty])
-            answer = QMessageBox.question(
-                self, 'Unsaved settings',
-                f'The {what} table has changes that are not in '
-                f'{settings_toml.SETTINGS_TOML_NAME} yet.\n\nRefreshing '
-                f'reads the folder again and would lose them.',
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save)
-            if answer == QMessageBox.Cancel:
-                return
-            if answer == QMessageBox.Save:
-                if self._objects.dirty:
-                    self._objects.save(self._folder)
-                if self._sprites.dirty:
-                    self._sprites.save(self._folder)
+        # No question about unsaved edits any more: a refresh re-reads the
+        # folder's pictures and keeps the session's settings, so there is
+        # nothing to lose and nothing to ask. This fires whenever the window
+        # is brought back to the front, and a dialog on every return -- for a
+        # loss that no longer happens -- was the worst of both.
 
         # Where the author was, so a reload does not throw it away. The tab
         # matters most: refreshing while reading the Sprites tab should not
@@ -1673,7 +1713,14 @@ class Window(QMainWindow):
         tab = self._tabs.currentIndex()
         scroll = self._files.verticalScrollBar().value()
 
-        self._load_folder(self._folder)
+        was_dirty = self._objects.dirty or self._sprites.dirty
+        self._load_folder(self._folder, reuse=True)
+        # Rebuilding the rows clears each table's flag, but nothing was
+        # written -- so the project is exactly as unsaved as it was.
+        if was_dirty:
+            self._objects._dirty = self._objects.rowCount() > 0
+            self._sprites._dirty = self._sprites.rowCount() > 0
+            self._sync_save_actions()
 
         self._tabs.setCurrentIndex(min(tab, self._tabs.count() - 1))
         self._files.verticalScrollBar().setValue(scroll)

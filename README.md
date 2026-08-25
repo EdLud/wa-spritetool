@@ -85,12 +85,15 @@ how the second one comes to exist.
 If a project mentions pictures that are no longer in the folder, opening it
 says so and leaves them alone. They are dropped the next time you save.
 
-The window re-reads the folder whenever you come back to it, so edits made
-in another program show up without asking. **View -> Refresh** (F5, or Cmd+R
+The window re-reads the folder whenever you come back to it, so art edited
+in another program shows up without asking. It re-reads the *pictures*, not
+the settings: what the tables hold is the session's, and stays until you
+save. Editing the settings file by hand while the window is open is not
+something it tries to notice -- the file is read when a project opens and
+written when you save it, and in between the window is what counts. **View -> Refresh** (F5, or Cmd+R
 on macOS) does the same on demand, for the times the window never lost focus.
 Neither runs while a pack is going, since packing writes into the folder it
-is reading, and both offer to save the object table first if it has unsaved
-changes.
+is reading.
 
 The window's tabs show the folder's files and their colours, the objects'
 placement settings, the sprite records, the shared palette, and what packing

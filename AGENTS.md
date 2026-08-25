@@ -294,8 +294,12 @@ SpriteEditor writes).
   editing a file means being in another program, so returning is the gesture
   that follows an edit, and catching it needs no watcher on hundreds of
   files. It refuses while a job runs (packing writes into the folder it
-  reads) and offers to save the object table when it is dirty, since a reload
-  would drop those edits. `QKeySequence.Refresh` alone is not enough: it is
+  reads) but asks nothing about unsaved edits: `_load_folder(reuse=True)`
+  re-reads the folder's pictures and hands the tables the settings they
+  already hold, so nothing is lost and there is nothing to ask. The settings
+  file is read when a project opens and written when it is saved; in between
+  the widgets are the source of truth, and a hand edit to the file
+  mid-session is deliberately not noticed. `QKeySequence.Refresh` alone is not enough: it is
   F5 on every platform, macOS included.
 - The window takes archives as well as folders. `DropZone` classifies what
   was dropped (`is_archive`, `.dir` only -- the one extension `extract` and
