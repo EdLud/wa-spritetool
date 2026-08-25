@@ -1114,6 +1114,104 @@ def check_toml(no_numpy=False):
                        f"{seen.get(12, 0)} core-header, "
                        f"{seen.get(40, 0)} info-header") and good
 
+    # Art lent by the tool is exempt from the palette on the run that lends
+    # it and ordinary from then on. Getting that wrong is not a small error:
+    # a folder whose every asset was lent and then painted over produced no
+    # author colours at all, an empty shared palette, and an archive in which
+    # every pixel resolved to index 0 -- packed successfully, drawing nothing.
+    tmp = tempfile.mkdtemp(prefix='toml-lent-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        out1 = os.path.join(tmp, 'o1')
+        rc, stdout, stderr = tool(
+            ['pack-terrain', build, out1, '--yes=setup.confirm', '--defaults'],
+            no_numpy)
+        if rc:
+            good = say(False, 'lent art counts after the run that lends it',
+                       _tail(stdout + stderr))
+        else:
+            # Packing again with nothing changed must land the same archive:
+            # the lent art was fitted to the terrain's palette as it was
+            # copied in, so counting it now adds no colour.
+            out2 = os.path.join(tmp, 'o2')
+            rc2, o2, e2 = tool(['pack-terrain', build, out2, '--defaults'],
+                               no_numpy)
+            same = (not rc2
+                    and md5(os.path.join(out1, 'Level.dir'))
+                    == md5(os.path.join(out2, 'Level.dir')))
+            # ...and an edit to a lent picture must reach the archive, which
+            # a permanent exemption would have left out of the palette.
+            from PIL import Image
+            bridge = os.path.join(build, 'bridge.png')
+            reached = None
+            if same and os.path.exists(bridge):
+                Image.new('RGBA', (64, 19), (255, 0, 255, 255)).save(bridge)
+                out3 = os.path.join(tmp, 'o3')
+                rc3, o3, e3 = tool(['pack-terrain', build, out3, '--defaults'],
+                                   no_numpy)
+                dec = os.path.join(tmp, 'dec')
+                rc4, _, _ = tool(
+                    ['decompress', os.path.join(out3, 'Level.dir'), dec],
+                    no_numpy)
+                shot = os.path.join(dec, 'Level', 'bridge.img.bmp')
+                reached = False
+                if not rc3 and not rc4 and os.path.exists(shot):
+                    with open(shot, 'rb') as fh:
+                        _w, _h, px, pal = spritetool.read_bmp(fh.read())
+                    drawn = {tuple(pal[i * 3:i * 3 + 3])
+                             for i in set(px) if i}
+                    reached = (255, 0, 255) in drawn
+            if not same:
+                good = say(False, 'lent art counts after the run that lends it',
+                           'two runs with no edits between them differed')
+            elif not reached:
+                good = say(False, 'lent art counts after the run that lends it',
+                           'an edit to lent art never reached the archive')
+            else:
+                good = say(True, 'lent art counts after the run that lends it',
+                           'two runs agree, an edit to it packs') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # A terrain with no objects packs. The guide reads as though one is
+    # required and no shipped terrain has none, so this was a refusal -- but
+    # a terrain built with an empty index.txt loads and plays, which was
+    # tested in the game rather than reasoned about. A missing index.txt was
+    # only ever a note; an empty one now says the same thing.
+    tmp = tempfile.mkdtemp(prefix='toml-noobj-')
+    try:
+        bare = os.path.join(tmp, 'core')
+        os.makedirs(bare)
+        # The flat fixture is objects only, so the core art comes from the
+        # presets -- which is where a folder with no objects of its own would
+        # get it anyway, and --defaults would copy in regardless.
+        for name in ('text.png', 'soil.png', 'grass.png', 'gradient.png',
+                     'bridge.png', 'bridge-l.png', 'bridge-r.png',
+                     'icon.png'):
+            src = os.path.join(ROOT, 'presets', name)
+            if os.path.exists(src):
+                shutil.copyfile(src, os.path.join(bare, name))
+        out = os.path.join(tmp, 'out')
+        rc, stdout, stderr = tool(
+            ['pack-terrain', bare, out, '--yes=setup.confirm', '--defaults'],
+            no_numpy)
+        log = stdout + stderr
+        if rc:
+            good = say(False, 'a terrain with no objects packs', _tail(log))
+        elif not os.path.exists(os.path.join(out, 'Level.dir')):
+            good = say(False, 'a terrain with no objects packs',
+                       'reported success but wrote no archive')
+        elif 'no custom objects' not in log:
+            good = say(False, 'a terrain with no objects packs',
+                       'packed without saying it has no objects')
+        else:
+            good = say(True, 'a terrain with no objects packs',
+                       'noted, not refused') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # An unanswered question must never block. stdin here is an open pipe that
     # nobody writes to -- a build server, or any run whose input is a pipe --
     # which never reaches EOF, so a question that waits on it waits for ever.

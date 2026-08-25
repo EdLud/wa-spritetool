@@ -1399,6 +1399,13 @@ def _map_to_palette(counts: Dict[Tuple[int, int, int], int],
     is compared only against buckets near it, widening the ring until the
     nearest entry found is closer than the ring itself can reach.
     """
+    if not chosen:
+        # Never silently: with no entries the scan below finds nothing, best
+        # stays -1, and every colour is written as index 0 -- the transparent
+        # one -- so the picture packs cleanly and draws nothing. A caller that
+        # gets here has already gone wrong; say so rather than hand back an
+        # empty picture that looks like a successful one.
+        raise ValueError('cannot map colours to an empty palette')
     distinct = list(counts)
     if np is not None and len(distinct) > 256:
         # Every colour against every entry at once. A photograph brings tens
@@ -3191,29 +3198,10 @@ def _mark_settled(folder: str, borrowed: Sequence[str],
     return settings_toml.save(folder, toml)
 
 
-def _legacy_borrowed(folder: str) -> List[str]:
-    """What the legacy settings.spritetool marker recorded as borrowed.
-
-    The marker spelled them 'bridge,debris' and wrote 'nothing' when none
-    was taken. Only read so a folder set up before the TOML keeps lending
-    the same pieces -- and keeps them out of the palette budget.
-    """
-    was = (read_settings(folder) or {}).get('borrowed', '')
-    if not was or was == 'nothing':
-        return []
-    return [n for n in was.split(',') if n]
-
-
-def _borrowed_names(folder: str,
-                    toml: Optional[settings_toml.TerrainSettings],
-                    legacy: Sequence[str]) -> List[str]:
-    """The entry names a folder borrowed, from whichever marker recorded them."""
-    if toml is not None:
-        was = toml.tool.get('borrowed')
-        if isinstance(was, list):
-            return [n for n in was if isinstance(n, str)]
-        return []
-    return list(legacy)
+# Nothing reads what a folder borrowed any more. The [spritetool] borrowed
+# list is still written, as a record of what the tool put there, but art is
+# only exempt from the palette on the run that lends it -- see lent_names in
+# pack_terrain -- so there is no marker to consult on a later run.
 
 
 def _has_icon(source_dir: str) -> bool:
@@ -3883,7 +3871,13 @@ def archive_problems(entries: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
         listed = [l.strip() for l in entries[index].decode('latin-1').splitlines()
                   if l.strip()]
         if not listed:
-            refuse.append('index.txt is empty; a terrain needs at least 1 object')
+            # Not a refusal. The guide reads as though a terrain needs an
+            # object, and no shipped one has none -- but a terrain packed with
+            # an empty index.txt loads and plays, which was tested rather than
+            # assumed. A missing index.txt was already only a note; an empty
+            # one is the same thing said differently, so it says the same.
+            notes.append('index.txt is empty; the terrain will have no custom '
+                         'objects')
         elif len(listed) > MAX_OBJECTS:
             refuse.append(f'index.txt lists {len(listed)} objects; the limit is '
                           f'{MAX_OBJECTS}. The game crashes on the land '
@@ -5050,7 +5044,6 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
     # What the legacy settings.spritetool marker recorded as borrowed, for a
     # folder set up before the TOML existed. Folded into [spritetool] when
     # the folder is next marked.
-    legacy_borrowed: List[str] = []
 
     if os.path.isdir(target):
         # Nothing to author: the folder is the input. A Level.dir.txt in
@@ -5065,8 +5058,6 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                     f"Not packing {os.path.basename(source_dir)}: "
                     f"{settings_toml.SETTINGS_TOML_NAME} does not read: "
                     + '; '.join(toml.problems[:3]))
-            if toml is None:
-                legacy_borrowed = _legacy_borrowed(source_dir)
             if toml is None and not folder_settled(source_dir):
                 # Not set up yet, by either the TOML or the legacy marker it
                 # folds in. Any folder may be a terrain now -- the name no
@@ -5263,13 +5254,20 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
                     # left of it rather than shrinking their work for it.
                     lent_names = list(borrowed)
                 else:
-                    # Still borrowed, still spending none of the budget.
-                    # Without this a folder packs differently the second
-                    # time: the copies are ordinary files by then, the cut
-                    # is made across them too, and it lands somewhere else
-                    # -- 13 of 112 colours in common, in one measured case.
-                    was = _borrowed_names(source_dir, toml, legacy_borrowed)
-                    lent_names = was
+                    # Nothing is exempt any more. Art is lent once, fitted to
+                    # the author's palette on that same run, and written to
+                    # the folder already fitted -- so from the next run it is
+                    # an ordinary file that draws the colours the terrain
+                    # already has, and counting it adds none.
+                    #
+                    # That is what keeps two runs identical, and it is also
+                    # the only way an edit to a lent picture reaches the
+                    # archive: a permanent exemption reads the author's own
+                    # work as the tool's and leaves it out of the palette
+                    # entirely. A folder whose every asset was lent and then
+                    # painted over produced no colours at all, and packed a
+                    # terrain in which nothing was drawn.
+                    lent_names = []
                 print(f"Scanned {os.path.basename(source_dir)}: "
                       f"{len(names)} entries, {len(_objects)} objects")
     else:
@@ -5377,6 +5375,16 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
         # picture was remapped, became ordinary, and was remapped again
         # against a palette that had moved meanwhile.
         own = _authors_colours(picture_sources, lent_names)
+        if own is not None and not own:
+            # Nothing drawn anywhere the palette is cut from. An empty
+            # palette is not a small palette: every colour in every picture
+            # then resolves to the nearest of no entries, which is index 0,
+            # the transparent one -- so the archive packs successfully and
+            # holds nothing. Leaving it None lets each picture keep its own
+            # colours, which is what happened before a shared cut existed.
+            print('  no colours to share a palette from; each picture keeps '
+                  'its own')
+            own = None
         if own is not None and len(own) <= MAX_SHARED_COLOURS:
             shared_palette = sorted(own)
             print(f"  {len(shared_palette)} colours in the art, inside "
