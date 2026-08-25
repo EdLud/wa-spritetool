@@ -1,7 +1,7 @@
 @echo off
 REM Double-click this to open the spritetool window on Windows.
 REM
-REM Same job as spritetool.command on macOS: find a Python that can actually
+REM Same job as launcher.command on macOS: find a Python that can actually
 REM run the window, say plainly what is missing when none can, and keep the
 REM console open on a failure. A double-clicked .bat closes the instant it
 REM ends, so anything printed on the way out is never read.

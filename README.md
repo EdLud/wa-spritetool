@@ -40,7 +40,7 @@ cd spritetool
 
 ## The window
 
-Double-click **`spritetool.command`** on macOS, or **`spritetool.bat`** on
+Double-click **`launcher.command`** on macOS, or **`launcher.bat`** on
 Windows. Both sit in the folder you just cloned.
 
 The first time, they offer to install what the window needs -- about 380 MB,
@@ -52,7 +52,7 @@ After that they find a Python that can actually run the window rather than
 the first one they meet -- a machine with several usually has PySide6 in only
 one -- preferring that `.venv` over anything on PATH. On macOS, if the
 double-click opens a text editor instead of running, the executable bit was
-lost in transit: `chmod +x spritetool.command`.
+lost in transit: `chmod +x launcher.command`.
 
 From a terminal it is:
 

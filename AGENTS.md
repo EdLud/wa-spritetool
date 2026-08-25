@@ -90,7 +90,7 @@ about ten colours the terrain does not actually share.
   per-object `.inf`, the `.spr.spd` sidecar), which are now read only to
   migrate them. It imports nothing from the repo, so both `spritetool` and
   `gui` can import it without a cycle.
-- `spritetool.command` / `spritetool.bat` — double-click launchers for the
+- `launcher.command` / `launcher.bat` — double-click launchers for the
   window, macOS and Windows. Each probes for a Python that can import both
   PySide6 and Pillow rather than the first interpreter it finds (a machine
   with several usually has PySide6 in only one), preferring a `.venv` beside

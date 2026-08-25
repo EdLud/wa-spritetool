@@ -3,7 +3,7 @@
 #
 # A .command file is what Finder will run on a double-click; a plain .sh
 # opens in a text editor instead. It needs the executable bit, which git
-# records -- if it was lost, `chmod +x spritetool.command` puts it back.
+# records -- if it was lost, `chmod +x launcher.command` puts it back.
 #
 # Everything here is about the two ways a double-click fails silently: the
 # window never appears and Terminal closes before anyone can read why. So
