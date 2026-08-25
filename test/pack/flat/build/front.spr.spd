@@ -1,0 +1,5 @@
+frames = 128
+height = 250
+width = 1024
+framerate = 1
+flags = 1

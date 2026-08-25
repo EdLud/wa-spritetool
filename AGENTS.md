@@ -147,8 +147,18 @@ One command runs all of it:
 ```bash
 python3 test/run.py               # everything
 python3 test/run.py --no-numpy    # again, on the pure-Python paths
-python3 test/run.py pack          # one group: decode|manifest|pack|colours|toml
+python3 test/run.py pack          # one group, or several: `pack colours`
 ```
+
+**Run what the change can reach.** Two groups are almost all of the wait --
+`toml` is ~250s and `pack` ~50s, because each packs real terrains and every
+pack spawns a process pool (~13s a run, mostly starting and stopping
+workers). Everything else together is under 6s. So a decoder change is
+`decode`, a palette or encoder change is `pack colours`, and anything about
+settings.spritetool.toml, setup, or sprite records is `toml`. Run the whole
+suite before a commit; `--no-numpy` only when the change touched colour
+counting or palette fitting, which is all numpy does here. A change that
+cannot affect a group -- a docstring, a GUI label -- does not need it run.
 
 Non-zero if anything moved. What it covers:
 

@@ -4,8 +4,23 @@
     python3 test/run.py
     python3 test/run.py --no-numpy      # the pure-Python paths
     python3 test/run.py decode          # just one group
+    python3 test/run.py decode pack     # several
 
     python3 test/run.py --all           # including the slow ones
+
+Two groups are most of the wait, because both pack real terrains and a pack
+spawns a process pool per run -- around 13s each, most of it starting and
+stopping workers rather than compressing:
+
+    toml   ~250s   20 packs
+    pack    ~50s    4 packs
+    everything else, together, under 6s
+
+So run what the change can reach. Editing the decoder is `decode`; the
+palette or the encoders is `pack colours`; anything about
+settings.spritetool.toml, setup or the sprite records is `toml`. The whole
+thing before a commit, and `--no-numpy` when the change touched colour
+counting or palette fitting, which is the only thing numpy does here.
 
 Groups:
 
