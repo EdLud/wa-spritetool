@@ -67,6 +67,13 @@ folder: the art as BMP, and every object's placement and every terrain
 sprite's geometry written to `settings.spritetool.toml`. The result packs
 straight back with `pack-terrain`.
 
+`decompress` also takes a loose `.img` or `.spr` -- a terrain's `TEXT.img`
+sits beside its `Level.dir` rather than in it, so these are files people have
+on their own. `decode_picture_file` is the one decoder, shared with the
+archive path: the fixture checks a picture decoded on its own is byte-identical
+to the same entry decoded out of its archive. The window takes them dropped,
+several at a time, and asks once where they go.
+
 `decompress` unpacks the archive it is given and nothing that sits beside
 it. It no longer writes a `<name>.dir.txt` listing (a synthesized pack
 argument, not archive data -- `pack` rebuilds the order from a folder scan

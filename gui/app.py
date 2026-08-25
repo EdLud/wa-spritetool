@@ -76,15 +76,27 @@ class DropZone(QFrame):
     #: decompress read, and the only one worth accepting for them.
     ARCHIVE_EXTS = ('.dir',)
 
+    #: Pictures that are not in an archive: a terrain's TEXT.img beside its
+    #: Level.dir, an .spr pulled out with `extract`. Several may be dropped
+    #: at once, which an archive may not -- one archive is a question about
+    #: where it should go, a handful of pictures is one answer for all.
+    PICTURE_EXTS = ('.img', '.spr')
+
     @classmethod
     def is_archive(cls, path):
         return (os.path.isfile(path)
                 and path.lower().endswith(cls.ARCHIVE_EXTS))
 
-    def __init__(self, on_folder, on_archive=None):
+    @classmethod
+    def is_picture(cls, path):
+        return (os.path.isfile(path)
+                and path.lower().endswith(cls.PICTURE_EXTS))
+
+    def __init__(self, on_folder, on_archive=None, on_pictures=None):
         super().__init__()
         self._on_folder = on_folder
         self._on_archive = on_archive
+        self._on_pictures = on_pictures
         self.setAcceptDrops(True)
         self.setObjectName('dropzone')
         self.setMinimumHeight(96)
@@ -112,9 +124,13 @@ class DropZone(QFrame):
     #: Said in the label when nothing has been dropped, and as the tooltip
     #: wherever the zone is described. One sentence per thing that can be
     #: dropped, because the two do opposite jobs.
-    IDLE_TEXT = 'Drop a folder to build a terrain, or a .dir archive to extract it.'
+    IDLE_TEXT = ('Drop a folder to build a terrain, a .dir archive to '
+                 'extract it, or .img/.spr pictures to decode.')
     IDLE_TIP = ('A folder is prepared as a terrain project.\n'
-                'A .dir archive is decompressed and its contents written to a folder.')
+                'A .dir archive is decompressed and its contents written to '
+                'a folder.\n'
+                'Loose .img or .spr pictures are decoded to BMP; several at '
+                'once is fine.')
 
     def show_folder(self, folder):
         if not folder:
@@ -139,9 +155,18 @@ class DropZone(QFrame):
     # a mistake worth refusing at the door rather than reporting later: the
     # zone simply does not light up, which says no before the mouse is let go.
     def _accepts(self, urls):
-        if len(urls) != 1:
+        paths = [u.toLocalFile() for u in urls]
+        if not paths:
             return None
-        path = urls[0].toLocalFile()
+        # Several at once only for pictures. A folder is a terrain and an
+        # archive is a question about where to unpack it; neither means
+        # anything in a handful.
+        if all(self.is_picture(p) for p in paths) \
+                and self._on_pictures is not None:
+            return 'pictures'
+        if len(paths) != 1:
+            return None
+        path = paths[0]
         if os.path.isdir(path):
             return 'folder'
         if self.is_archive(path) and self._on_archive is not None:
@@ -165,11 +190,13 @@ class DropZone(QFrame):
         kind = self._accepts(urls)
         if kind is None:
             return
-        path = urls[0].toLocalFile()
-        if kind == 'archive':
-            self._on_archive(path)
+        paths = [u.toLocalFile() for u in urls]
+        if kind == 'pictures':
+            self._on_pictures(paths)
+        elif kind == 'archive':
+            self._on_archive(paths[0])
         else:
-            self._on_folder(path)
+            self._on_folder(paths[0])
 
     def _restyle(self):
         self.style().unpolish(self)
@@ -720,7 +747,8 @@ class Window(QMainWindow):
         #: Questions settled before packing, by key -- see _offer_setup.
         self._answers = {}
 
-        self._drop = DropZone(self.set_folder, self.take_archive_apart)
+        self._drop = DropZone(self.set_folder, self.take_archive_apart,
+                              self.decode_pictures)
         self._pack = QPushButton('Pack to Level.dir')
         self._pack.setObjectName('primary')
         self._pack.setEnabled(False)
@@ -1754,6 +1782,58 @@ class Window(QMainWindow):
             lambda: self.statusBar().showMessage('Cancelled'))
         self._job.finished.connect(self._settle)
         self._job.start(self._folder, self._out_dir, options, self._answers)
+
+    def decode_pictures(self, paths, ask=True):
+        """Decode loose .img/.spr pictures to BMP, several at a time.
+
+        One question -- where they go -- rather than one per file: the answer
+        is the same for all of them, and a handful of pictures dropped
+        together is one gesture. Decoding is quick enough to do here rather
+        than in a child; the archive path is in one because a Water.dir with
+        its GIFs takes twenty seconds, and a handful of pictures does not.
+        """
+        if not paths:
+            return
+        if self._job is not None and self._job.running:
+            QMessageBox.information(
+                self, APP_NAME, 'Something is already running. Let it finish '
+                'first.')
+            return
+        if not ask:
+            return
+
+        first = os.path.dirname(os.path.abspath(paths[0]))
+        many = len(paths) > 1
+        out_dir = QFileDialog.getExistingDirectory(
+            self,
+            f'Where should {"they" if many else os.path.basename(paths[0])} '
+            f'go?' if many else
+            f'Where should {os.path.basename(paths[0])} go?',
+            first)
+        if not out_dir:
+            return
+
+        self._log.clear()
+        wrote, failed = 0, []
+        for path in paths:
+            try:
+                n, note = st.decode_picture_file(path, out_dir)
+            except Exception as exc:            # never on one bad file
+                n, note = 0, f'{os.path.basename(path)}: {exc}'
+            if n:
+                wrote += n
+                self._say('out', f'Decoded {note}')
+            else:
+                failed.append(note)
+                self._say('err', f'  {note}')
+        self._say('out', f'\nWrote {wrote} picture'
+                         f'{"" if wrote == 1 else "s"} to {out_dir}')
+        if failed and not wrote:
+            QMessageBox.warning(
+                self, APP_NAME,
+                'Nothing could be decoded:\n\n' + '\n'.join(failed[:6]))
+        self.statusBar().showMessage(
+            f'Decoded {wrote} of {len(paths)} to {out_dir}')
 
     def take_archive_apart(self, archive, ask=True):
         """A dropped .dir: where to put it, how to open it, then do it.

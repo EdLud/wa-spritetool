@@ -4946,6 +4946,69 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
     return args[0], (args[1] if len(args) > 1 else None), options
 
 
+def decode_picture_file(path: str, out_dir: str) -> Tuple[int, str]:
+    """Decode one loose .img or .spr into `out_dir`. Returns (written, note).
+
+    A picture that is not in an archive: a terrain's TEXT.img beside its
+    Level.dir, an .img someone was sent on its own, an .spr pulled out with
+    `extract`. The archive path already decodes these once they are read out
+    of a .dir; this is the same work with the container left off.
+
+    Returns 0 and a reason rather than raising, so a caller decoding several
+    can report the one that failed and carry on with the rest.
+    """
+    name = os.path.basename(path)
+    try:
+        with open(path, 'rb') as fh:
+            data = fh.read()
+    except OSError as exc:
+        return 0, f'{name}: {exc}'
+    if len(data) < 4:
+        return 0, f'{name}: too short to be a picture'
+
+    kind = data[:4]
+    os.makedirs(out_dir, exist_ok=True)
+    if kind == ImageFile.SIGNATURE:
+        image = ImageFile(data)
+        if not image.parse():
+            return 0, f'{name}: does not read as an image'
+        bmp = SpriteFile._create_bmp(image.pixels, image.rgb_palette(),
+                                     image.width, image.height)
+        if bmp is None:
+            return 0, f'{name}: could not be drawn'
+        # Named as the archive path names it, so a folder of these can be
+        # handed to `pack` exactly like a decompressed one.
+        dest = os.path.join(out_dir, name + '.bmp')
+        with open(dest, 'wb') as fh:
+            fh.write(bmp)
+        return 1, (f'{name} ({image.width}x{image.height}, '
+                   f'{image.ncolours} colours)')
+    if kind == SpriteFile.SIGNATURE:
+        sprite = SpriteFile(data)
+        if not sprite.parse():
+            return 0, f'{name}: does not read as a sprite'
+        sheet = sprite.render_sheet()
+        if sheet is None:
+            return 0, f'{name}: could not be drawn'
+        bmp = SpriteFile._create_bmp(sheet, sprite.rgb_palette(),
+                                     sprite.width,
+                                     sprite.height * sprite.frames)
+        if bmp is None:
+            return 0, f'{name}: could not be drawn'
+        with open(os.path.join(out_dir, name + '.bmp'), 'wb') as fh:
+            fh.write(bmp)
+        # The .spd too: a sheet says nothing about how it is cut up, so
+        # without it the frames cannot be put back.
+        with open(os.path.join(out_dir, name + '.spd'), 'w',
+                  encoding='latin-1', newline='\r\n') as fh:
+            fh.write(sprite.to_metadata_string())
+        return 1, (f'{name} ({sprite.frames} frames, '
+                   f'{sprite.width}x{sprite.height}, '
+                   f'{sprite.ncolours} colours)')
+    return 0, (f'{name}: not a picture -- expected {ImageFile.SIGNATURE!r} '
+               f'or {SpriteFile.SIGNATURE!r}, got {kind!r}')
+
+
 def choose_project(folder: str, wanted: Optional[str] = None) -> Optional[str]:
     """Which settings file in `folder` to use. Raises when it cannot tell.
 
@@ -5791,6 +5854,22 @@ def main():
         # Name the GIF folder after the source .dir so decompressing several
         # archives into one output directory does not overwrite same-named GIFs.
         gif_output_dir = os.path.join(base_output_dir, f'{dir_basename} gifs')
+
+        # A loose picture rather than an archive. The same decoding, with
+        # the container left off -- a terrain's TEXT.img sits beside its
+        # Level.dir rather than in it, so this is a file people actually
+        # have on its own.
+        if os.path.isfile(dir_file):
+            with open(dir_file, 'rb') as fh:
+                head = fh.read(4)
+            if head in (ImageFile.SIGNATURE, SpriteFile.SIGNATURE):
+                written, note = decode_picture_file(dir_file, base_output_dir)
+                if not written:
+                    print(f'Error: {note}')
+                    return 1
+                print(f'Decoded {note}')
+                print(f'\nWrote 1 picture to {base_output_dir}')
+                return 0
 
         reader = DirectoryReader(dir_file)
         if not reader.read():

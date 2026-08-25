@@ -1426,6 +1426,53 @@ def check_toml(no_numpy=False):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # A picture on its own, not in an archive: a terrain's TEXT.img sits
+    # beside its Level.dir rather than in it. decompress takes one, and what
+    # it writes has to be the same bytes the archive path writes for the same
+    # entry -- one decoder, not two that drift.
+    tmp = tempfile.mkdtemp(prefix='loose-picture-')
+    try:
+        src = os.path.join(HERE, 'wa', 'Water.dir')
+        whole = os.path.join(tmp, 'whole')
+        rc, _o, err = tool(['decompress', src, whole], no_numpy)
+        loose = os.path.join(tmp, 'loose')
+        os.makedirs(loose)
+        # Pull one entry out and hand it over on its own.
+        import spritetool as _st
+        reader = _st.DirectoryReader(src)
+        reader.read()
+        with open(src, 'rb') as fh:
+            blob = reader.extract_file(fh, 'fill.img')
+        alone = os.path.join(loose, 'fill.img')
+        with open(alone, 'wb') as fh:
+            fh.write(blob)
+        out = os.path.join(tmp, 'out')
+        rc2, o2, e2 = tool(['decompress', alone, out], no_numpy)
+        made = os.path.join(out, 'fill.img.bmp')
+        from_archive = os.path.join(whole, 'Water', 'fill.img.bmp')
+        if rc or rc2:
+            good = say(False, 'a loose picture decodes',
+                       _tail(o2 + e2) or _tail(err))
+        elif not os.path.exists(made):
+            good = say(False, 'a loose picture decodes', 'wrote no BMP')
+        elif md5(made) != md5(from_archive):
+            good = say(False, 'a loose picture decodes',
+                       'differs from what the archive path writes')
+        else:
+            # ...and something that is not a picture is refused rather than
+            # written as one.
+            bogus = os.path.join(loose, 'bogus.img')
+            with open(bogus, 'wb') as fh:
+                fh.write(b'not a picture at all')
+            rc3, o3, e3 = tool(['decompress', bogus,
+                                os.path.join(tmp, 'no')], no_numpy)
+            good = say(rc3 != 0, 'a loose picture decodes',
+                       'byte-identical to the archive path, and a '
+                       'non-picture is refused' if rc3
+                       else 'a non-picture was accepted') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # An unanswered question must never block. stdin here is an open pipe that
     # nobody writes to -- a build server, or any run whose input is a pipe --
     # which never reaches EOF, so a question that waits on it waits for ever.

@@ -48,11 +48,7 @@ into a `.venv` folder beside the launcher, touching nothing else on the
 machine. Say yes and it downloads and opens; delete that folder to undo it.
 Say no and they print the two commands to do it by hand.
 
-After that they find a Python that can actually run the window rather than
-the first one they meet -- a machine with several usually has PySide6 in only
-one -- preferring that `.venv` over anything on PATH. On macOS, if the
-double-click opens a text editor instead of running, the executable bit was
-lost in transit: `chmod +x launcher.command`.
+On macOS, if the double-click opens a text editor instead of running, the executable bit was lost in transit: `chmod +x launcher.command`.
 
 From a terminal it is:
 
@@ -60,14 +56,18 @@ From a terminal it is:
 python3 -m gui
 ```
 
-Drop a build folder to pack it, or drop a `.dir` archive to take one apart.
-An archive asks three things in the order the answers are needed: where the
+Drop a build folder to start a terrain project, or drop a `.dir` archive to decompress it.
+
+Loose `.img` or `.spr` pictures can be dropped too -- as many at once as you
+like -- and are decoded to BMP. You are asked once where they go, since the
+answer is the same for all of them; a sprite gets its `.spd` beside the sheet,
+without which the frames cannot be put back. The command line takes one the
+same way: `decompress TEXT.img output/`.
+A decompression asks three things in the order the answers are needed: where the
 result should go, whether to **extract** it (the files exactly as the archive
 stores them) or **decompress** it (those files plus every picture decoded to
 an editable BMP), and -- for a decompress -- whether to write an animated GIF
-per sprite. The GIFs are the slow part, so they are asked for rather than
-assumed. Dismissing any of the three stops it, and nothing is written until
-the last one is answered.
+per sprite.
 
 **File** holds Save (Cmd+S) and Save As (Cmd+Shift+S). The object and sprite
 tables are edited in memory, so Save is what writes them; closing with unsaved
