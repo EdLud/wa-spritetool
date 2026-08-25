@@ -387,11 +387,26 @@ class SpriteTable(QTableWidget):
 
     So every sprite is listed with its record and its sheet side by side, and
     anything that does not add up is said in the row rather than saved for
-    the build. Read-only: the record can be edited in the file, and a value
-    typed here would want the same validation the packer already does.
+    the build.
+
+    Playback is the one field an author has a free choice about, so it is a
+    named choice here rather than a number to look up. The rest is read-only:
+    the frame count and cell size have to agree with the sheet, and a value
+    typed into a table would want the arithmetic the packer already does.
+
+    `framerate` is not shown at all. The guide records that it does nothing
+    for debris and the game ignores it elsewhere too, so a column of zeroes
+    would be a question the author cannot usefully answer. It is read from
+    the file and written back untouched -- hidden, not dropped.
     """
 
-    COLUMNS = ('Sprite', 'Frames', 'Cell', 'Sheet', 'Rate', 'Flags', 'Record')
+    COLUMNS = ('Sprite', 'Frames', 'Cell', 'Sheet', 'Playback', 'Record')
+
+    #: flags, from the terrain guide. The index is the value.
+    PLAYBACK = ('play once and stop',
+                'loop',
+                'forwards then backwards, stop',
+                'ping pong')
 
     def __init__(self):
         super().__init__(0, len(self.COLUMNS))
@@ -405,32 +420,43 @@ class SpriteTable(QTableWidget):
         for i in range(1, len(self.COLUMNS)):
             head.setSectionResizeMode(i, QHeaderView.ResizeToContents)
         self.problems = []
+        self._dirty = False
+        #: The record as read, by sprite name. Kept so a save writes back the
+        #: fields the table does not show -- framerate above all -- rather
+        #: than dropping them because they were not on screen.
+        self._records = {}
+
+    @property
+    def dirty(self):
+        return self._dirty
 
     def load(self, folder):
         """Fill from `folder`. Returns the number of sprites found."""
         self.setRowCount(0)
         self.problems = []
+        self._records = {}
         try:
             rows = st.sprite_records(folder)
         except Exception as exc:
             self.problems = [str(exc)]
+            self._dirty = False
             return 0
 
         self.setRowCount(len(rows))
         for r, row in enumerate(rows):
+            name = str(row['name'])
+            self._records[name] = row
             size = row['size']
             cell = ('--' if row['width'] is None or row['height'] is None
                     else f"{row['width']}x{row['height']}")
             sheet = '--' if size is None else f'{size[0]}x{size[1]}'
-            flags = ('--' if row['flags'] is None
-                     else f"0x{int(row['flags']):02x}")
-            cells = [str(row['name']),
+            cells = [name,
                      '--' if row['frames'] is None else str(row['frames']),
-                     cell, sheet,
-                     '--' if row['framerate'] is None else str(row['framerate']),
-                     flags,
+                     cell, sheet, None,
                      row['source'] or 'none']
             for c, text in enumerate(cells):
+                if text is None:
+                    continue            # the playback column, filled below
                 item = QTableWidgetItem(text)
                 if c:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -443,9 +469,53 @@ class SpriteTable(QTableWidget):
                 else:
                     item.setToolTip(str(row['sheet']))
                 self.setItem(r, c, item)
+
+            play = QComboBox()
+            play.addItems(self.PLAYBACK)
+            flags = row['flags']
+            if flags is None or not 0 <= int(flags) < len(self.PLAYBACK):
+                # No record, or a value the guide does not describe. Shown as
+                # itself rather than rounded into a meaning it may not have.
+                play.addItem('--' if flags is None else f'unknown ({flags})')
+                play.setCurrentIndex(len(self.PLAYBACK))
+            else:
+                play.setCurrentIndex(int(flags))
+            play.currentIndexChanged.connect(self._touch)
+            self.setCellWidget(r, 4, play)
+
             if row['problem']:
-                self.problems.append(f"{row['name']}: {row['problem']}")
+                self.problems.append(f"{name}: {row['problem']}")
+        self._dirty = False
         return len(rows)
+
+    def _touch(self, *_):
+        self._dirty = True
+
+    def save(self, folder):
+        """Write the playback values back. Returns the path, or None.
+
+        Only sprites whose record the TOML already owns are written: a
+        folder still carrying .spr.spd sidecars is one the author has not
+        converted, and quietly starting a TOML for it from this table would
+        leave two files disagreeing about the same sprite.
+        """
+        toml = settings_toml.load(folder)
+        if toml is None:
+            self._dirty = False
+            return None
+        toml.problems = []
+        for r in range(self.rowCount()):
+            name = self.item(r, 0).text()
+            if name not in toml.sprites:
+                continue
+            widget = self.cellWidget(r, 4)
+            idx = widget.currentIndex()
+            if idx >= len(self.PLAYBACK):
+                continue                # the unknown value, left as it was
+            toml.sprites[name]['flags'] = idx
+        path = settings_toml.save(folder, toml)
+        self._dirty = False
+        return path
 
 
 class Window(QMainWindow):
@@ -532,12 +602,23 @@ class Window(QMainWindow):
         self._changed.setRootIsDecorated(False)
 
         self._sprites = SpriteTable()
+        save_sprites = QPushButton(f'Save {settings_toml.SETTINGS_TOML_NAME}')
+        save_sprites.clicked.connect(self._save_sprites)
+        spr_page = QWidget()
+        spr_box = QVBoxLayout(spr_page)
+        spr_box.setContentsMargins(0, 0, 0, 0)
+        spr_box.addWidget(self._sprites)
+        spr_row = QHBoxLayout()
+        spr_row.addStretch(1)
+        spr_row.addWidget(save_sprites)
+        spr_box.addLayout(spr_row)
+        self._spr_page = spr_page
 
         tabs = QTabWidget()
         tabs.addTab(self._files, 'Folder')
         self._obj_page = obj_page
         tabs.addTab(obj_page, 'Objects')
-        tabs.addTab(self._sprites, 'Sprites')
+        tabs.addTab(spr_page, 'Sprites')
         tabs.addTab(self._palette, 'Palette')
         tabs.addTab(self._changed, 'Changes')
         self._tabs = tabs
@@ -980,7 +1061,7 @@ class Window(QMainWindow):
         sprites = self._sprites.load(folder)
         bad = len(self._sprites.problems)
         self._tabs.setTabText(
-            self._tabs.indexOf(self._sprites),
+            self._tabs.indexOf(self._spr_page),
             f'Sprites ({sprites})' if not bad else f'Sprites ({bad} wrong)')
         for problem in self._sprites.problems:
             self._say('err', f'  note: {problem}')
@@ -1038,6 +1119,32 @@ class Window(QMainWindow):
         self._palette.setText('No palette.png yet. Pack with the palette '
                               'sheet enabled to draw one.')
 
+    def _save_sprites(self):
+        """Write the playback choices back to the settings file."""
+        if not self._folder:
+            return
+        if self._sprites.problems:
+            # A row that does not add up is showing a record the packer would
+            # refuse. Saving from here would not fix it and might write a
+            # playback value beside geometry nobody has corrected yet.
+            QMessageBox.warning(
+                self, 'Not saving',
+                'Some sprite records do not match their sheets:\n\n'
+                + '\n'.join(self._sprites.problems[:6])
+                + '\n\nFix the frame count or the sheet first.')
+            return
+        path = self._sprites.save(self._folder)
+        if path is None:
+            QMessageBox.information(
+                self, APP_NAME,
+                f'This folder keeps its sprite geometry in .spr.spd sidecars '
+                f'rather than {settings_toml.SETTINGS_TOML_NAME}.\n\nPack '
+                f'it once, or convert it when asked, and the records move '
+                f'into the settings file where they can be edited here.')
+            return
+        self._say('out', f'wrote {os.path.basename(path)}')
+        self._load_folder(self._folder)
+
     def _save_objects(self):
         if not self._folder:
             return
@@ -1082,13 +1189,16 @@ class Window(QMainWindow):
             if announce:
                 self._say('err', 'not refreshing: a job is running')
             return
-        if self._objects.dirty:
-            # The table is about to be re-read from disk, which would drop
+        if self._objects.dirty or self._sprites.dirty:
+            # A table is about to be re-read from disk, which would drop
             # edits that are not in the file yet. Silently is the wrong way
             # to do that.
+            what = ' and '.join(
+                [n for n, t in (('object', self._objects),
+                                ('sprite', self._sprites)) if t.dirty])
             answer = QMessageBox.question(
-                self, 'Unsaved object settings',
-                f'The object table has changes that are not in '
+                self, 'Unsaved settings',
+                f'The {what} table has changes that are not in '
                 f'{settings_toml.SETTINGS_TOML_NAME} yet.\n\nRefreshing '
                 f'reads the folder again and would lose them.',
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
@@ -1096,7 +1206,10 @@ class Window(QMainWindow):
             if answer == QMessageBox.Cancel:
                 return
             if answer == QMessageBox.Save:
-                self._objects.save(self._folder)
+                if self._objects.dirty:
+                    self._objects.save(self._folder)
+                if self._sprites.dirty:
+                    self._sprites.save(self._folder)
 
         # Where the author was, so a reload does not throw it away. The tab
         # matters most: refreshing while reading the Sprites tab should not
@@ -1128,17 +1241,23 @@ class Window(QMainWindow):
     def start_pack(self):
         if not self._folder or (self._job and self._job.running):
             return
-        if self._objects.dirty:
+        if self._objects.dirty or self._sprites.dirty:
+            what = ' and '.join(
+                [n for n, t in (('object', self._objects),
+                                ('sprite', self._sprites)) if t.dirty])
             answer = QMessageBox.question(
-                self, 'Unsaved object settings',
-                f'The object table has changes that are not in '
+                self, 'Unsaved settings',
+                f'The {what} table has changes that are not in '
                 f'{settings_toml.SETTINGS_TOML_NAME} yet.\n\nSave them before '
                 f'packing?',
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
             if answer == QMessageBox.Cancel:
                 return
             if answer == QMessageBox.Save:
-                self._objects.save(self._folder)
+                if self._objects.dirty:
+                    self._objects.save(self._folder)
+                if self._sprites.dirty:
+                    self._sprites.save(self._folder)
 
         self._log.clear()
         self._changed.clear()

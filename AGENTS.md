@@ -297,7 +297,13 @@ SpriteEditor writes).
   height and `cell_w` its width. Setup reports every sprite that fails it;
   the packer still refuses, but on the first one it reaches, which is a poor
   way to learn that three are wrong. The window's Sprites tab shows the same
-  data, read-only.
+  data. Only `flags` is editable there, as a named choice from the guide
+  (0 stop, 1 loop, 2 forwards-back, 3 ping pong); geometry stays read-only
+  because it has to agree with the sheet. `framerate` is not shown at all --
+  the game ignores it -- but SpriteTable keeps the records it read so a save
+  writes it back rather than dropping a field that was merely off screen.
+  Saving refuses on a folder whose geometry still lives in `.spr.spd`
+  sidecars, which would otherwise gain a TOML that disagrees with them.
 - `_spd_geometry` reads the `.spr.spd` sidecars in the folder *and* in each
   `gfx0`/`gfx1` override folder, keyed as the packer looks them up (`gfx0\
   cloudm`). Coral Reef keeps 450 sprites in `gfx0`, so a migration that

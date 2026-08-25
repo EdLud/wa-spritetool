@@ -77,6 +77,15 @@ frame count is not a crash, it is art sliced in the wrong places -- and the
 same check runs when a folder is set up, so every wrong record is reported at
 once rather than one per failed build.
 
+**Playback** is the one field there you can freely choose, so it is a named
+choice rather than a number: play once and stop, loop, forwards then
+backwards then stop, or ping pong. Change it and press Save. The frame count
+and cell size stay read-only, since those have to agree with the sheet.
+
+`framerate` is not shown. The guide records that it does nothing for debris
+and the game ignores it elsewhere, so it would be a column of zeroes nobody
+can act on. It is read and written back untouched -- hidden, not dropped.
+
 ## Usage
 
 ### List an archive
