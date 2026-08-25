@@ -70,13 +70,69 @@ this file again."
 
     $FALLBACK -m gui"
     fi
-    say_and_wait "spritetool needs $MISSING, which is not installed.
+    # Offer to do it. Telling a novice to run pip is telling them to hit
+    # PEP 668: a Homebrew or system Python refuses to install into itself
+    # and suggests --break-system-packages, which is the last thing anyone
+    # should paste into a terminal they do not know. A virtual environment
+    # sidesteps that entirely and is one folder they can delete.
+    echo
+    echo "spritetool needs two things it can install for you:"
+    echo
+    echo "  Pillow      15 MB   reads and writes the pictures"
+    echo "  PySide6    364 MB   draws the window itself"
+    echo
+    echo "They go into a .venv folder beside this file and touch nothing"
+    echo "else on your Mac. Delete that folder to undo it."
+    echo
+    printf "Install them now? [y/N] "
+    read -r answer
+    case "$answer" in
+        [Yy]*) ;;
+        *)
+            say_and_wait "Nothing installed.
 
-Install it with:
+To do it yourself:
 
-    $FALLBACK -m pip install ${MISSING//and /}
+    $FALLBACK -m venv .venv
+    .venv/bin/python -m pip install pillow PySide6-Essentials
 
 then double-click this file again."
+            ;;
+    esac
+
+    echo
+    echo "Creating .venv..."
+    if ! "$FALLBACK" -m venv .venv; then
+        say_and_wait "Could not create the .venv folder.
+
+Check that you can write to:
+    $(pwd)"
+    fi
+    echo "Downloading (this takes a few minutes the first time)..."
+    # PySide6-Essentials, not PySide6: the meta-package pulls in Addons too
+    # -- WebEngine, 3D, Multimedia, Charts -- for 1.2 GB against 364 MB, and
+    # the window uses QtCore, QtGui and QtWidgets, all of which are here.
+    # Warnings from pip's own cache are not this author's business; the
+    # exit status is what says whether it worked. Errors still show, since
+    # only stderr's chatter is dropped and a real failure says so below.
+    if ! ./.venv/bin/python -m pip install --quiet --no-cache-dir \
+            pillow PySide6-Essentials 2>/dev/null; then
+        say_and_wait "The download did not finish.
+
+Try again, or do it yourself:
+
+    ./.venv/bin/python -m pip install pillow PySide6-Essentials"
+    fi
+    if ! ./.venv/bin/python -c 'import PySide6, PIL' >/dev/null 2>&1; then
+        say_and_wait "The install finished but the window still cannot start.
+
+Run this to see why:
+
+    ./.venv/bin/python -m gui"
+    fi
+    PYTHON=./.venv/bin/python
+    echo "Done."
+    echo
 fi
 
 "$PYTHON" -m gui "$@"

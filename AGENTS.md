@@ -94,8 +94,15 @@ about ten colours the terrain does not actually share.
   window, macOS and Windows. Each probes for a Python that can import both
   PySide6 and Pillow rather than the first interpreter it finds (a machine
   with several usually has PySide6 in only one), preferring a `.venv` beside
-  the repo; when none can, it names the missing piece and pauses so the
-  message is readable after a double-click. `.gitattributes` pins the `.bat`
+  the repo; when none can, it offers to build that `.venv` and install
+  `pillow PySide6-Essentials` into it, then opens the window.
+  **Not a bare `pip install`**: a Homebrew or system Python is
+  externally managed (PEP 668) and refuses to install into itself, suggesting
+  `--break-system-packages` — which is not something to put in front of a
+  novice. **`PySide6-Essentials`, not `PySide6`**: the meta-package pulls in
+  Addons (WebEngine, 3D, Multimedia, Charts) for ~1.2 GB against ~364 MB, and
+  the window only imports QtCore, QtGui and QtWidgets. Declining prints the
+  two commands to do it by hand. `.gitattributes` pins the `.bat`
   to CRLF (cmd.exe mis-parses bare LF) and the `.command` to LF, and the
   `.command` is committed executable.
 - `SPR_FORMAT.md` — reverse-engineering notes for the sprite format (working

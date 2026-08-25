@@ -38,15 +38,73 @@ call :try_any python
 call :try_any python3
 if not defined FALLBACK goto :no_python
 
-set "MISSING="
-%FALLBACK% -c "import PySide6" >nul 2>&1 || set "MISSING= PySide6"
-%FALLBACK% -c "import PIL" >nul 2>&1 || set "MISSING=%MISSING% Pillow"
+REM Offer to install rather than print a pip line. A novice told to run pip
+REM meets whatever their Python decides about installing into itself, and on
+REM a managed one that is a refusal with --break-system-packages as the
+REM suggested way round it. A virtual environment avoids the question and is
+REM one folder they can delete.
 echo.
-echo spritetool needs%MISSING%, which is not installed.
+echo spritetool needs two things it can install for you:
 echo.
-echo Install it with:
+echo   Pillow      15 MB   reads and writes the pictures
+echo   PySide6    364 MB   draws the window itself
 echo.
-echo     %FALLBACK% -m pip install%MISSING%
+echo They go into a .venv folder beside this file and touch nothing
+echo else on your PC. Delete that folder to undo it.
+echo.
+set "ANSWER="
+set /p "ANSWER=Install them now? [y/N] "
+if /i not "%ANSWER:~0,1%"=="y" goto :declined
+
+echo.
+echo Creating .venv...
+%FALLBACK% -m venv .venv
+if errorlevel 1 (
+    echo.
+    echo Could not create the .venv folder. Check that you can write to:
+    echo     %CD%
+    echo.
+    pause
+    exit /b 1
+)
+echo Downloading ^(this takes a few minutes the first time^)...
+REM PySide6-Essentials, not PySide6: the meta-package pulls in Addons too --
+REM WebEngine, 3D, Multimedia, Charts -- for 1.2 GB against 364 MB, and the
+REM window uses QtCore, QtGui and QtWidgets, all of which are here.
+".venv\Scripts\python.exe" -m pip install --quiet --no-cache-dir pillow PySide6-Essentials
+if errorlevel 1 (
+    echo.
+    echo The download did not finish. Try again, or do it yourself:
+    echo.
+    echo     .venv\Scripts\python.exe -m pip install pillow PySide6-Essentials
+    echo.
+    pause
+    exit /b 1
+)
+".venv\Scripts\python.exe" -c "import PySide6, PIL" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo The install finished but the window still cannot start. Run this
+    echo to see why:
+    echo.
+    echo     .venv\Scripts\python.exe -m gui
+    echo.
+    pause
+    exit /b 1
+)
+set PYTHON=".venv\Scripts\python.exe"
+echo Done.
+echo.
+goto :run
+
+:declined
+echo.
+echo Nothing installed.
+echo.
+echo To do it yourself:
+echo.
+echo     %FALLBACK% -m venv .venv
+echo     .venv\Scripts\python.exe -m pip install pillow PySide6-Essentials
 echo.
 echo then double-click this file again.
 echo.

@@ -12,18 +12,24 @@ for this tool and is documented in [SPR_FORMAT.md](SPR_FORMAT.md).
 
 ## Requirements
 
-Python 3.8 or newer, and [Pillow](https://pypi.org/project/Pillow/).
+Python 3.8 or newer. Everything else the launchers can install for you --
+see below.
+
+If you would rather do it yourself, install into a virtual environment beside
+the tool rather than into your system Python, which on macOS and most Linux
+distributions refuses the write and suggests `--break-system-packages`:
 
 ```bash
-pip install pillow
+python3 -m venv .venv
+.venv/bin/python -m pip install pillow PySide6-Essentials
 ```
 
-The window needs [PySide6](https://pypi.org/project/PySide6/) as well. The
-command line does not, and never imports it.
-
-```bash
-pip install PySide6
-```
+[Pillow](https://pypi.org/project/Pillow/) reads and writes the pictures and
+is needed for everything. [PySide6](https://pypi.org/project/PySide6/) draws
+the window; the command line never imports it. `PySide6-Essentials` is the
+part the window uses -- the full `PySide6` package adds WebEngine, 3D,
+Multimedia and Charts for about a gigabyte more, none of which is touched
+here.
 
 ## Install
 
@@ -37,13 +43,16 @@ cd spritetool
 Double-click **`spritetool.command`** on macOS, or **`spritetool.bat`** on
 Windows. Both sit in the folder you just cloned.
 
-Each finds a Python that can actually run the window rather than the first
-one it meets -- a machine with several usually has PySide6 in only one of
-them, and a `.venv` beside the launcher is preferred over anything on PATH.
-If nothing suitable is found they say which piece is missing and give you the
-line to install it, and they hold the window open so you can read it. On
-macOS, if the double-click opens a text editor instead of running, the
-executable bit was lost in transit: `chmod +x spritetool.command`.
+The first time, they offer to install what the window needs -- about 380 MB,
+into a `.venv` folder beside the launcher, touching nothing else on the
+machine. Say yes and it downloads and opens; delete that folder to undo it.
+Say no and they print the two commands to do it by hand.
+
+After that they find a Python that can actually run the window rather than
+the first one they meet -- a machine with several usually has PySide6 in only
+one -- preferring that `.venv` over anything on PATH. On macOS, if the
+double-click opens a text editor instead of running, the executable bit was
+lost in transit: `chmod +x spritetool.command`.
 
 From a terminal it is:
 
