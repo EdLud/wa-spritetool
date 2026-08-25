@@ -11,7 +11,7 @@ import contextlib
 import os
 import sys
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QEvent, Qt, QSize
 from PySide6.QtGui import QAction, QFont, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
@@ -266,11 +266,35 @@ class _MultiEdit:
         #: Last value seen per (row, column), so a spin box's change can be
         #: read as a step rather than a destination.
         self._was = {}
+        #: The rows selected when the mouse last went down on a cell widget.
+        self._pressed_rows = set()
 
     def _rows_with(self, row):
-        """The selected rows, when `row` is one of them. Otherwise just it."""
+        """The selected rows, when `row` is one of them. Otherwise just it.
+
+        The selection as it was when the mouse went down, not as it is now.
+        Pressing a spin box's arrow moves focus into that spin box first, and
+        a cell widget taking focus can collapse the table's selection to its
+        own row -- so by the time valueChanged arrives, the other rows the
+        author had chosen may no longer be selected. `_pressed_rows` is what
+        they picked; it is preferred whenever the edited row is among them.
+        """
         chosen = {i.row() for i in self.selectedIndexes()}
+        if self._pressed_rows and row in self._pressed_rows:
+            chosen = set(self._pressed_rows)
         return sorted(chosen) if row in chosen and len(chosen) > 1 else [row]
+
+    def _note_selection(self):
+        """Remember the selection before a click can disturb it."""
+        self._pressed_rows = {i.row() for i in self.selectedIndexes()}
+
+    def eventFilter(self, watched, event):
+        # Every cell widget is watched, so a press on any of them is seen
+        # before the widget itself handles it -- which is where focus moves
+        # and the selection can change.
+        if event.type() == QEvent.MouseButtonPress:
+            self._note_selection()
+        return super().eventFilter(watched, event)
 
     def _spread(self, row, col):
         if self._spreading:
@@ -303,6 +327,11 @@ class _MultiEdit:
             # stay set apart.
             if step:
                 target.setValue(target.value() + step)
+            # Noted here, because this row's own _spread is suppressed while
+            # the spread runs -- so nothing else would record what it now
+            # holds, and its next edit would be measured from a value it left
+            # behind two edits ago.
+            self._was[(row, col)] = target.value()
             return
         if isinstance(source, QComboBox) and isinstance(target, QComboBox):
             target.setCurrentIndex(source.currentIndex())
@@ -313,13 +342,24 @@ class _MultiEdit:
             other.setChecked(box.isChecked())
 
     def _remember_values(self):
-        """Note every spin box, so the first change reads as a step."""
+        """Note every spin box, and watch every cell widget for a press.
+
+        Called once the rows are built. The watching is what lets
+        `_rows_with` see the selection as it was before the click, and the
+        children are watched too -- a checkbox sits inside a holder widget,
+        and the press lands on the checkbox.
+        """
         self._was = {}
         for row in range(self.rowCount()):
             for col in range(self.columnCount()):
                 widget = self.cellWidget(row, col)
+                if widget is None:
+                    continue
                 if isinstance(widget, QSpinBox):
                     self._was[(row, col)] = widget.value()
+                widget.installEventFilter(self)
+                for child in widget.findChildren(QWidget):
+                    child.installEventFilter(self)
 
 
 class ObjectTable(_MultiEdit, QTableWidget):
