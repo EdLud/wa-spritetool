@@ -271,6 +271,15 @@ SpriteEditor writes).
   is only offered when a `.bmp`/`.png` sits beside it to rebuild it from, and
   a `.spr` only when its frame count is in the TOML or a `.spd` -- a sheet
   says nothing about its own frame count. All default to no.
+- The window re-reads its folder from one place, `Window.refresh`. Three
+  things call it: `View -> Refresh` (F5 and Ctrl+R, the latter being Cmd+R on
+  macOS), and `applicationStateChanged` when the app is brought forward --
+  editing a file means being in another program, so returning is the gesture
+  that follows an edit, and catching it needs no watcher on hundreds of
+  files. It refuses while a job runs (packing writes into the folder it
+  reads) and offers to save the object table when it is dirty, since a reload
+  would drop those edits. `QKeySequence.Refresh` alone is not enough: it is
+  F5 on every platform, macOS included.
 - The window takes archives as well as folders. `DropZone` classifies what
   was dropped (`is_archive`, `.dir` only -- the one extension `extract` and
   `decompress` read) and the window asks output folder, then extract vs

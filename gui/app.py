@@ -12,7 +12,7 @@ import os
 import sys
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QAction, QFont, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -569,6 +569,28 @@ class Window(QMainWindow):
         split.setStretchFactor(1, 2)
         self.setCentralWidget(split)
         self.statusBar().showMessage('Drop a build folder to begin')
+        self._build_menus()
+
+    def _build_menus(self):
+        """The menu bar. Qt moves this to the system bar on macOS.
+
+        There was none at all before, which on macOS leaves the app showing
+        only the items the system supplies and looks half-finished. Refresh
+        is what it is for now; it is also the natural home for anything later
+        that does not deserve a button of its own.
+        """
+        view = self.menuBar().addMenu('&View')
+        refresh = QAction('&Refresh', self)
+        # Both, because the two habits differ: F5 is what Windows and Linux
+        # reach for, Ctrl+R what a Mac user does -- and Qt spells Ctrl as the
+        # Command key there, so one string covers both platforms.
+        # QKeySequence.Refresh is not enough on its own: it resolves to F5
+        # everywhere, macOS included.
+        refresh.setShortcuts([QKeySequence('F5'), QKeySequence('Ctrl+R')])
+        refresh.setStatusTip('Read the folder again')
+        refresh.triggered.connect(lambda: self.refresh(announce=True))
+        view.addAction(refresh)
+        self._refresh_action = refresh
 
     # ------------------------------------------------------------ folder --
 
@@ -1035,6 +1057,72 @@ class Window(QMainWindow):
         self._say('out', f'wrote {os.path.basename(path)}')
         self._load_folder(self._folder)
 
+    # ----------------------------------------------------------- refresh --
+
+    def refresh(self, announce=False):
+        """Read the folder again, keeping where the author was looking.
+
+        The one reload path: the menu item, the shortcut and coming back to
+        the window all end up here, so there is a single thing to reason
+        about rather than three that drift.
+
+        `announce` is for the explicit triggers, which should say they did
+        something even when nothing changed -- a command that appears to do
+        nothing is one the author stops trusting. The focus trigger passes
+        False, because a line in the log every time the window is clicked is
+        noise.
+        """
+        if not self._folder:
+            return
+        if self._job is not None and self._job.running:
+            # Packing writes into the folder it is reading -- the settings
+            # file, borrowed art copied in, that art refitted in place -- so
+            # a reload here would show a folder half-written and race the
+            # work still doing it.
+            if announce:
+                self._say('err', 'not refreshing: a job is running')
+            return
+        if self._objects.dirty:
+            # The table is about to be re-read from disk, which would drop
+            # edits that are not in the file yet. Silently is the wrong way
+            # to do that.
+            answer = QMessageBox.question(
+                self, 'Unsaved object settings',
+                f'The object table has changes that are not in '
+                f'{settings_toml.SETTINGS_TOML_NAME} yet.\n\nRefreshing '
+                f'reads the folder again and would lose them.',
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save)
+            if answer == QMessageBox.Cancel:
+                return
+            if answer == QMessageBox.Save:
+                self._objects.save(self._folder)
+
+        # Where the author was, so a reload does not throw it away. The tab
+        # matters most: refreshing while reading the Sprites tab should not
+        # drop them back on Folder.
+        tab = self._tabs.currentIndex()
+        scroll = self._files.verticalScrollBar().value()
+
+        self._load_folder(self._folder)
+
+        self._tabs.setCurrentIndex(min(tab, self._tabs.count() - 1))
+        self._files.verticalScrollBar().setValue(scroll)
+        if announce:
+            name = os.path.basename(self._folder.rstrip(os.sep))
+            self._say('out', f'refreshed {name}')
+
+    def _app_state_changed(self, state):
+        """Refresh when the window is brought back to the front.
+
+        Changing a file in the folder means being in another program to do
+        it, so coming back here is the gesture that follows an edit. Reading
+        the folder then costs a fraction of a second and means what is shown
+        is what is on disk, without a watcher on hundreds of files.
+        """
+        if state == Qt.ApplicationActive:
+            self.refresh()
+
     # -------------------------------------------------------------- pack --
 
     def start_pack(self):
@@ -1272,6 +1360,14 @@ def main(argv=None):
     app.setApplicationName(APP_NAME)
     app.setStyleSheet(STYLE)
     window = Window()
+    # Coming back to the window re-reads the folder. Changing a file in it
+    # means being in another program to do it, so a return here is the
+    # gesture that follows an edit -- and this catches it without a watcher
+    # on hundreds of files. applicationStateChanged rather than a focus
+    # event on the widget: it fires when the app is brought forward, which is
+    # the thing being noticed, and not when focus moves between two of its
+    # own widgets.
+    app.applicationStateChanged.connect(window._app_state_changed)
     window.show()
 
     if selftest:
@@ -1286,6 +1382,35 @@ def main(argv=None):
         if os.path.isdir(fixture):
             window.set_folder(fixture, ask=False)
             print(f'setup needed: {len(window.setup_needed(fixture))} piece(s)')
+
+            # Refresh has three triggers and one path; a folder that changes
+            # behind the window must be picked up by it, and the tab the
+            # author was on must survive. Checked here because it needs a
+            # built window, which is what this already has.
+            import shutil as _sh
+            spare = os.path.join(fixture, 'obj-selftest-refresh.png')
+            source = next((os.path.join(fixture, f)
+                           for f in sorted(os.listdir(fixture))
+                           if f.lower().endswith('.png')), None)
+            if source and not os.path.exists(spare):
+                was = window._files.topLevelItemCount()
+                window._tabs.setCurrentIndex(window._tabs.count() - 1)
+                tab = window._tabs.currentIndex()
+                _sh.copyfile(source, spare)
+                try:
+                    window.refresh()
+                    grew = window._files.topLevelItemCount() == was + 1
+                    kept = window._tabs.currentIndex() == tab
+                finally:
+                    os.remove(spare)
+                    window.refresh()
+                back = window._files.topLevelItemCount() == was
+                print(f'refresh: sees a new file {grew}, keeps the tab '
+                      f'{kept}, sees it go {back}')
+                if not (grew and kept and back):
+                    print('gui selftest FAILED: refresh did not track the '
+                          'folder')
+                    return 1
         app.processEvents()
         print('gui selftest ok')
         return 0

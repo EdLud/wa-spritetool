@@ -60,6 +60,13 @@ per sprite. The GIFs are the slow part, so they are asked for rather than
 assumed. Dismissing any of the three stops it, and nothing is written until
 the last one is answered.
 
+The window re-reads the folder whenever you come back to it, so edits made
+in another program show up without asking. **View -> Refresh** (F5, or Cmd+R
+on macOS) does the same on demand, for the times the window never lost focus.
+Neither runs while a pack is going, since packing writes into the folder it
+is reading, and both offer to save the object table first if it has unsaved
+changes.
+
 The window's tabs show the folder's files and their colours, the objects'
 placement settings, the sprite records, the shared palette, and what packing
 changed. The **Sprites** tab is where a sheet's record lives: a sprite is one
