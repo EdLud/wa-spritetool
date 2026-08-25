@@ -318,6 +318,23 @@ SpriteEditor writes).
   `gfx0`/`gfx1` override folder, keyed as the packer looks them up (`gfx0\
   cloudm`). Coral Reef keeps 450 sprites in `gfx0`, so a migration that
   stopped at the top level would strand their frame counts.
+- A folder may hold several settings files: anything ending
+  `.spritetool.toml`, so `Paradise Ruins.spritetool.toml` sits beside another
+  project over the same art. `settings_toml.candidates(folder)` lists them,
+  default name first; `load_path`/`save_path` take a path where
+  `load`/`save` take a folder and use the first candidate. The window asks
+  which; the CLI refuses with a one-based list and takes `--project=N` or
+  `--project=NAME`.
+- `settings_toml.Project` holds a terrain's settings in memory. The tables
+  edit it and set one `dirty`, rather than each writing its own file --
+  there were three separate dirty flags before, and two guards that had to be
+  widened by hand every time a fourth thing became editable. `Project.save()`
+  writes back where it came from, `save(path)` is Save As and owns the new
+  path afterwards. The trade is named in its docstring: a crash used to cost
+  nothing because the file was always current, and now costs unsaved work,
+  which is why Save, Save As and a warning on close come with it.
+- Settings describing art that is gone are noted on open (`find_orphans`),
+  kept, and dropped by the next save. Looking at a project does not edit it.
 - A terrain's settings live in `settings.spritetool.toml`, read and written
   through `settings_toml.py` -- a hand-rolled TOML parser/writer, no
   dependency, Python 3.8+ preserved (the stdlib's `tomllib` is 3.11+ and

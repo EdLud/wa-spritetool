@@ -41,9 +41,13 @@ Layout (flat tables; the tool's own keys under [spritetool]):
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 SETTINGS_TOML_NAME = 'settings.spritetool.toml'
+
+#: What makes a file one of ours. Anything may come before it, so a folder
+#: can hold `Paradise Ruins.spritetool.toml` beside another project's.
+SETTINGS_TOML_SUFFIX = '.spritetool.toml'
 
 # The six object placement values, in the order the game's .inf stores them.
 # These mirror spritetool.SETTINGS_KEYS; duplicated so this module stands
@@ -227,15 +231,33 @@ def parse_toml(text: str) -> Tuple[Dict[str, Dict[str, object]], List[str]]:
     return tables, problems
 
 
-def load(folder: str) -> Optional[TerrainSettings]:
-    """Read settings.spritetool.toml, or None when the folder has none.
+def candidates(folder: str) -> List[str]:
+    """Every settings file in `folder`, best-known name first.
 
-    None is the thing worth knowing: it means the folder has not been set up
-    as a spritetool terrain yet, so legacy sources (if any) should be read for
-    migration instead. A file that exists but does not read comes back as a
-    TerrainSettings carrying its problems.
+    A folder may hold more than one: two projects over the same art, kept
+    apart by name. `settings.spritetool.toml` is still what is written for a
+    folder that has none, so it sorts first and a folder with only that one
+    behaves as it always did. The rest follow alphabetically, which is stable
+    and is the order a chooser should list them in.
     """
-    path = os.path.join(folder, SETTINGS_TOML_NAME)
+    try:
+        here = os.listdir(folder)
+    except OSError:
+        return []
+    found = [f for f in here
+             if f.lower().endswith(SETTINGS_TOML_SUFFIX)
+             and os.path.isfile(os.path.join(folder, f))]
+    found.sort(key=lambda f: (f != SETTINGS_TOML_NAME, f.lower()))
+    return [os.path.join(folder, f) for f in found]
+
+
+def load_path(path: str) -> Optional[TerrainSettings]:
+    """Read one settings file, or None when it is not there.
+
+    The path-taking half of `load`. Everything that reads a settings file
+    goes through here, so a project that knows its own filename does not have
+    to be a folder with exactly one.
+    """
     if not os.path.exists(path):
         return None
     with open(path, 'r', encoding='utf-8') as fh:
@@ -269,6 +291,23 @@ def load(folder: str) -> Optional[TerrainSettings]:
         else:
             settings.problems.append(f'unknown table [{table}]')
     return settings
+
+
+def load(folder: str) -> Optional[TerrainSettings]:
+    """Read a folder's settings file, or None when it has none.
+
+    None is the thing worth knowing: it means the folder has not been set up
+    as a spritetool terrain yet, so legacy sources (if any) should be read for
+    migration instead. A file that exists but does not read comes back as a
+    TerrainSettings carrying its problems.
+
+    Where a folder holds several, this takes the first `candidates` names --
+    which is `settings.spritetool.toml` if it is there. Choosing between them
+    is a question for whoever has someone to ask; this is the answer for
+    everything that just needs the folder's settings.
+    """
+    found = candidates(folder)
+    return load_path(found[0]) if found else None
 
 
 # ------------------------------------------------------------------- writer --
@@ -312,9 +351,159 @@ def to_toml(settings: TerrainSettings) -> str:
     return '\n'.join(lines)
 
 
-def save(folder: str, settings: TerrainSettings) -> str:
-    """Write settings.spritetool.toml. Returns the path written."""
-    path = os.path.join(folder, SETTINGS_TOML_NAME)
+def save_path(path: str, settings: TerrainSettings) -> str:
+    """Write one settings file. Returns the path written."""
     with open(path, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write(to_toml(settings))
     return path
+
+
+def save(folder: str, settings: TerrainSettings) -> str:
+    """Write a folder's settings file. Returns the path written.
+
+    Back where it was read from when the folder already has one, so a project
+    named something else is not silently duplicated under the default name;
+    `settings.spritetool.toml` when there is nothing there yet.
+    """
+    found = candidates(folder)
+    return save_path(found[0] if found
+                     else os.path.join(folder, SETTINGS_TOML_NAME), settings)
+
+
+# ------------------------------------------------------------------ project --
+
+class Project:
+    """One terrain's settings, held in memory until saved.
+
+    The file was the model before this: every edit wrote through immediately,
+    so there was nothing to save and nothing to lose -- but also three
+    separate dirty flags in the window, one per table, each guarded by hand.
+    A project is the one thing that is edited and the one thing that is
+    dirty.
+
+    That trade is worth naming: a crash used to cost nothing because the file
+    was always current, and now costs whatever was not saved. It is the
+    ordinary bargain of a document editor, and the reason Save, Save As and a
+    warning on close come with it.
+
+    `path` is the file it came from, or None for a project that has never
+    been saved -- which is what a folder with no settings file gives.
+    """
+
+    def __init__(self, folder: str, path: Optional[str] = None,
+                 settings: Optional[TerrainSettings] = None):
+        self.folder = folder
+        self.path = path
+        settings = settings if settings is not None else TerrainSettings()
+        self.objects = settings.objects
+        self.sprites = settings.sprites
+        self.tool = settings.tool
+        self.problems = list(settings.problems)
+        #: Settings describing art that is no longer in the folder. Kept, so
+        #: nothing is dropped behind the author's back, and written out of
+        #: the file by the next save.
+        self.orphans: Dict[str, List[str]] = {'objects': [], 'sprites': []}
+        self._dirty = False
+
+    # -- state ---------------------------------------------------------
+
+    @property
+    def dirty(self) -> bool:
+        return self._dirty
+
+    def touch(self) -> None:
+        """Mark the project as differing from what is on disk."""
+        self._dirty = True
+
+    @property
+    def name(self) -> str:
+        """What to call this project. The filename, less our suffix."""
+        if not self.path:
+            return os.path.basename(self.folder.rstrip(os.sep)) or 'terrain'
+        base = os.path.basename(self.path)
+        if base.lower().endswith(SETTINGS_TOML_SUFFIX):
+            base = base[:-len(SETTINGS_TOML_SUFFIX)]
+        return base or 'settings'
+
+    def options(self) -> Dict[str, bool]:
+        return options_of(self.as_settings())
+
+    def as_settings(self) -> TerrainSettings:
+        """The plain record this project would be written as."""
+        return TerrainSettings(objects=self.objects, sprites=self.sprites,
+                               tool=self.tool, problems=list(self.problems))
+
+    # -- opening and saving --------------------------------------------
+
+    @classmethod
+    def open(cls, path: str) -> 'Project':
+        """Read one settings file into a project."""
+        settings = load_path(path) or TerrainSettings()
+        return cls(os.path.dirname(os.path.abspath(path)), path, settings)
+
+    @classmethod
+    def for_folder(cls, folder: str,
+                   path: Optional[str] = None) -> 'Project':
+        """A project for `folder`: the named file, its only one, or a new one.
+
+        `path` picks between several; without it the first candidate wins,
+        which is `settings.spritetool.toml` where that exists. A folder with
+        no settings file at all gives a project with no path -- unsaved, not
+        empty-and-saved -- so the first save has somewhere to ask about.
+        """
+        if path is None:
+            found = candidates(folder)
+            path = found[0] if found else None
+        if path is None:
+            return cls(folder)
+        return cls.open(path)
+
+    def save(self, path: Optional[str] = None) -> str:
+        """Write the project. `path` given is Save As, and is owned after.
+
+        Orphaned settings go here rather than at open: the file is not
+        rewritten behind the author's back, and what is dropped is dropped at
+        a moment they asked for.
+        """
+        target = path or self.path
+        if target is None:
+            target = os.path.join(self.folder, SETTINGS_TOML_NAME)
+        self.drop_orphans()
+        save_path(target, self.as_settings())
+        self.path = target
+        self._dirty = False
+        return target
+
+    # -- stale data ----------------------------------------------------
+
+    def find_orphans(self, object_stems: Sequence[str],
+                     sprite_names: Sequence[str]) -> List[str]:
+        """Note settings whose art is gone. Returns them, as descriptions.
+
+        Not removed here. An author opening a project to look at it should
+        not have it edited by the looking; the entries stay, the project is
+        marked dirty, and the next save is what drops them.
+        """
+        have_objects = {s.lower() for s in object_stems}
+        have_sprites = {s.lower() for s in sprite_names}
+        self.orphans = {
+            'objects': sorted(k for k in self.objects
+                              if k.lower() not in have_objects),
+            'sprites': sorted(k for k in self.sprites
+                              if k.lower() not in have_sprites),
+        }
+        said = ([f'object {k}' for k in self.orphans['objects']]
+                + [f'sprite {k}' for k in self.orphans['sprites']])
+        if said:
+            self._dirty = True
+        return said
+
+    def drop_orphans(self) -> int:
+        """Forget the noted orphans. Returns how many went."""
+        gone = 0
+        for key in self.orphans['objects']:
+            gone += self.objects.pop(key, None) is not None
+        for key in self.orphans['sprites']:
+            gone += self.sprites.pop(key, None) is not None
+        self.orphans = {'objects': [], 'sprites': []}
+        return gone

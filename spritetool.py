@@ -4839,6 +4839,10 @@ class Options:
     #: is recoloured without saying so again -- and a flag still wins, and
     #: still writes nothing back.
     explicit: Set[str] = dataclasses.field(default_factory=set)
+    #: Which settings file to use, where a folder holds more than one: a
+    #: one-based index into the listed order, or the name itself. None means
+    #: the folder had better hold at most one.
+    project: Optional[str] = None
     #: Questions settled ahead of time, by key. A key ending in a dot settles
     #: everything beneath it, which is what --defaults means: an opinion about
     #: borrowed art in general rather than about one piece of it.
@@ -4900,6 +4904,15 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
                                       f"as {head}=KEY")
             options.answers[key] = head == '--yes'
             continue
+        if flag.startswith('--project'):
+            _, sep, which = flag.partition('=')
+            if not sep or not which:
+                raise SpritetoolError(
+                    "--project takes the number or the name of a settings "
+                    "file, as --project=2 or --project=\"Paradise Ruins\". "
+                    "Pack without it to see the list.")
+            options.project = which
+            continue
         if flag.startswith('--jobs'):
             _, sep, count = flag.partition('=')
             if not sep or not count.isdigit() or int(count) < 1:
@@ -4931,6 +4944,50 @@ def parse_pack_args(argv: Sequence[str]) -> Tuple[str, Optional[str], Options]:
     if not os.path.exists(args[0]):
         raise SpritetoolError(f"File not found: {args[0]}")
     return args[0], (args[1] if len(args) > 1 else None), options
+
+
+def choose_project(folder: str, wanted: Optional[str] = None) -> Optional[str]:
+    """Which settings file in `folder` to use. Raises when it cannot tell.
+
+    None where the folder has none, which is a folder not set up yet rather
+    than a problem. One is that one, whatever it is called. Several with no
+    `wanted` is a question the command line cannot answer for itself, so it
+    prints what it found and stops -- a one-based list, because it is for a
+    person to read and retype.
+    """
+    found = settings_toml.candidates(folder)
+    if not found:
+        return None
+    if wanted is None:
+        if len(found) == 1:
+            return found[0]
+        listed = '\n'.join(
+            f'  {i}  {os.path.basename(p)}'
+            for i, p in enumerate(found, 1))
+        raise SpritetoolError(
+            f"several settings files in "
+            f"'{os.path.basename(folder.rstrip(os.sep))}':\n{listed}\n"
+            f"Pick one with --project=1, or by name.")
+    if wanted.isdigit():
+        n = int(wanted)
+        if not 1 <= n <= len(found):
+            raise SpritetoolError(
+                f"--project={n}: there are {len(found)} settings files, "
+                f"numbered 1 to {len(found)}.")
+        return found[n - 1]
+    # By name, with or without the suffix, and case-insensitively: the point
+    # is to retype what was printed without being exact about it.
+    low = wanted.lower()
+    for path in found:
+        base = os.path.basename(path)
+        stem = base[:-len(settings_toml.SETTINGS_TOML_SUFFIX)] \
+            if base.lower().endswith(settings_toml.SETTINGS_TOML_SUFFIX) \
+            else base
+        if low in (base.lower(), stem.lower()):
+            return path
+    names = ', '.join(os.path.basename(p) for p in found)
+    raise SpritetoolError(f"--project={wanted!r}: no such settings file. "
+                          f"This folder has: {names}")
 
 
 def setup_terrain(folder: str, ask: Asker) -> Tuple[List[str], str]:
@@ -5058,7 +5115,15 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
         if terrain:
             # Before the listing branch, not inside the scanned one. A
             # .dir.txt must not be a way around setting the folder up.
-            toml = settings_toml.load(source_dir)
+            # Which settings file, where the folder holds more than one.
+            # Raises with the list when it cannot tell, which is the only
+            # answer a command line can give to a question about intent.
+            chosen = choose_project(source_dir, options.project)
+            toml = (settings_toml.load_path(chosen)
+                    if chosen is not None else None)
+            if chosen is not None and len(
+                    settings_toml.candidates(source_dir)) > 1:
+                print(f'  project: {os.path.basename(chosen)}')
             if toml is not None and toml.problems:
                 raise PackFailed(
                     f"Not packing {os.path.basename(source_dir)}: "

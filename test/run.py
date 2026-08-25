@@ -1280,6 +1280,103 @@ def check_toml(no_numpy=False):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # A project holds its settings in memory and writes them on command.
+    # The file was the model before, so every edit wrote through and there was
+    # nothing to save; now there is, and dirty has to mean something.
+    tmp = tempfile.mkdtemp(prefix='toml-project-')
+    try:
+        proj = settings_toml.Project.for_folder(tmp)
+        step = None
+        if proj.path is not None:
+            step = 'an empty folder gave a project that thinks it is saved'
+        elif proj.dirty:
+            step = 'a new project started dirty'
+        else:
+            proj.objects['floor-1'] = [5, 0, 0, 1, 1, 3]
+            proj.touch()
+            if not proj.dirty:
+                step = 'an edit did not make it dirty'
+            else:
+                written = proj.save()
+                if proj.dirty:
+                    step = 'a save did not clear dirty'
+                elif os.path.basename(written) != \
+                        settings_toml.SETTINGS_TOML_NAME:
+                    step = f'saved to the wrong name: {written}'
+        if step is None:
+            # Save As names it and is owned afterwards, which is how a second
+            # project over the same art comes to exist.
+            other = os.path.join(tmp, 'Paradise Ruins.spritetool.toml')
+            again = settings_toml.Project.for_folder(tmp)
+            again.save(other)
+            if again.path != other:
+                step = 'save-as did not take ownership of the new path'
+            elif again.name != 'Paradise Ruins':
+                step = f'wrong project name: {again.name!r}'
+            elif len(settings_toml.candidates(tmp)) != 2:
+                step = 'the folder should now hold two settings files'
+        if step is None:
+            # Orphans: noted on open, kept until a save, gone after one.
+            stale = settings_toml.Project.for_folder(tmp)
+            stale.objects['vanished'] = [5, 0, 0, 1, 1, 3]
+            stale.save()
+            reopened = settings_toml.Project.for_folder(tmp)
+            said = reopened.find_orphans(['floor-1'], [])
+            if not said:
+                step = 'a setting for missing art was not noticed'
+            elif 'vanished' not in reopened.objects:
+                step = 'an orphan was dropped before a save'
+            elif not reopened.dirty:
+                step = 'noticing orphans did not mark the project dirty'
+            else:
+                reopened.save()
+                after = settings_toml.Project.for_folder(tmp)
+                if 'vanished' in after.objects:
+                    step = 'a save did not drop the orphan'
+        good = say(step is None, 'project model',
+                   step or 'dirty, save, save-as, orphans dropped on '
+                           'save') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # Several settings files in one folder: the CLI lists them rather than
+    # guessing, and picks by one-based index or by name.
+    tmp = tempfile.mkdtemp(prefix='toml-several-')
+    try:
+        work = os.path.join(tmp, 'src')
+        shutil.copytree(fixture, work)
+        build = os.path.join(work, 'build')
+        rc, _o, _e = tool(['pack-terrain', build, os.path.join(tmp, 'a'),
+                           '--yes=setup.confirm', '--defaults'], no_numpy)
+        settled = settings_toml.load(build)
+        settings_toml.save_path(
+            os.path.join(build, 'Paradise Ruins.spritetool.toml'), settled)
+        # No --project, and more than one: refuse with the list.
+        rc2, out2, err2 = tool(['pack-terrain', build,
+                                os.path.join(tmp, 'b')], no_numpy)
+        listed = rc2 != 0 and 'several settings files' in (out2 + err2) \
+            and '1  settings.spritetool.toml' in (out2 + err2)
+        # By index, and by name.
+        rc3, out3, _e3 = tool(['pack-terrain', build, os.path.join(tmp, 'c'),
+                               '--project=2'], no_numpy)
+        rc4, out4, _e4 = tool(['pack-terrain', build, os.path.join(tmp, 'd'),
+                               '--project=Paradise Ruins'], no_numpy)
+        picked = (not rc3 and not rc4
+                  and 'Paradise Ruins' in out3 and 'Paradise Ruins' in out4)
+        if rc:
+            good = say(False, 'several settings files', 'the first pack failed')
+        elif not listed:
+            good = say(False, 'several settings files',
+                       'did not list the choices when it could not tell')
+        elif not picked:
+            good = say(False, 'several settings files',
+                       f'--project did not pick: rc={rc3},{rc4}')
+        else:
+            good = say(True, 'several settings files',
+                       'listed, then picked by index and by name') and good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # An unanswered question must never block. stdin here is an open pipe that
     # nobody writes to -- a build server, or any run whose input is a pipe --
     # which never reaches EOF, so a question that waits on it waits for ever.

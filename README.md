@@ -60,6 +60,22 @@ per sprite. The GIFs are the slow part, so they are asked for rather than
 assumed. Dismissing any of the three stops it, and nothing is written until
 the last one is answered.
 
+**File** holds Save (Cmd+S) and Save As (Cmd+Shift+S). The object and sprite
+tables are edited in memory, so Save is what writes them; closing with unsaved
+changes asks first. **Options** holds three choices that belong to the terrain
+rather than to your machine -- automatic recolour on pack, compress sprites,
+and force -- so they travel in the settings file and the command line honours
+them too, printing what is in effect at the top of a run.
+
+A folder may hold more than one settings file: anything ending
+`.spritetool.toml`, so `Paradise Ruins.spritetool.toml` can sit beside another
+project over the same art. The window asks which one to open; the command line
+lists them and takes `--project=2` or `--project="Paradise Ruins"`. Save As is
+how the second one comes to exist.
+
+If a project mentions pictures that are no longer in the folder, opening it
+says so and leaves them alone. They are dropped the next time you save.
+
 The window re-reads the folder whenever you come back to it, so edits made
 in another program show up without asking. **View -> Refresh** (F5, or Cmd+R
 on macOS) does the same on demand, for the times the window never lost focus.

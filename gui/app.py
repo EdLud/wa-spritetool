@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QMainWindow, QMessageBox, QPlainTextEdit,
     QProgressBar, QPushButton, QSpinBox, QSplitter, QTabWidget, QTableWidget,
-    QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+    QInputDialog, QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget)
 
 from .bridge import PackJob
 from .job import ANSWER_CANCEL, ANSWER_NO, ANSWER_YES
@@ -347,6 +348,9 @@ class ObjectTable(QTableWidget):
 
     def _touch(self, *_):
         self._dirty = True
+        window = self.window()
+        if hasattr(window, '_sync_save_actions'):
+            window._sync_save_actions()
 
     def values(self):
         """[(stem, six values)], in the table's order."""
@@ -490,6 +494,9 @@ class SpriteTable(QTableWidget):
 
     def _touch(self, *_):
         self._dirty = True
+        window = self.window()
+        if hasattr(window, '_sync_save_actions'):
+            window._sync_save_actions()
 
     def save(self, folder):
         """Write the playback values back. Returns the path, or None.
@@ -528,6 +535,9 @@ class Window(QMainWindow):
         #: True while the Options menu is being ticked from a file, so the
         #: toggled signal does not write the value straight back.
         self._loading_options = False
+        #: Which settings file the window is editing, where the
+        #: folder holds several. None means its only one, or none.
+        self._project_path = None
         self._out_dir = None
         self._job = None
         #: Questions settled before packing, by key -- see _offer_setup.
@@ -663,6 +673,29 @@ class Window(QMainWindow):
         is what it is for now; it is also the natural home for anything later
         that does not deserve a button of its own.
         """
+        # File first, as everywhere else. Save writes the tables that have
+        # unsaved edits; Save As names the project and owns the new name
+        # afterwards, so a folder can hold two settings files over the same
+        # art and this is how the second one comes to exist.
+        filemenu = self.menuBar().addMenu('&File')
+        save = QAction('&Save', self)
+        save.setShortcut(QKeySequence.Save)                  # Cmd+S / Ctrl+S
+        save.setStatusTip('Write the object and sprite tables to the '
+                          'settings file')
+        save.setToolTip(save.statusTip())
+        save.triggered.connect(self.save_project)
+        filemenu.addAction(save)
+        self._save_action = save
+
+        save_as = QAction('Save &As...', self)
+        save_as.setShortcut(QKeySequence('Ctrl+Shift+S'))    # Cmd+Shift+S
+        save_as.setStatusTip('Write the settings to a file of your own '
+                             'naming, and keep working in it')
+        save_as.setToolTip(save_as.statusTip())
+        save_as.triggered.connect(self.save_project_as)
+        filemenu.addAction(save_as)
+        self._save_as_action = save_as
+
         view = self.menuBar().addMenu('&View')
         refresh = QAction('&Refresh', self)
         # Both, because the two habits differ: F5 is what Windows and Linux
@@ -746,6 +779,13 @@ class Window(QMainWindow):
         selftest, or anything driving the window -- would simply block forever
         on a modal box nobody can answer.
         """
+        # Which project, where the folder holds more than one. Asked before
+        # anything is read, since the answer decides what "this folder's
+        # settings" means for the rest of the call.
+        self._project_path = self._choose_project(folder, ask)
+        if self._project_path is False:
+            return                      # the chooser was dismissed
+
         # Any folder may be a terrain now -- the name no longer decides. What
         # remains is the setup confirmation, shown for a folder that is not
         # set up yet, with its contents reported rather than a refusal. The
@@ -804,18 +844,91 @@ class Window(QMainWindow):
         self._drop.show_folder(folder)
         self._pack.setEnabled(True)
         if self._out_dir is None:
-            # Beside the build folder, named after it. A guess, and shown, so
-            # it is corrected before packing rather than discovered after.
-            parent = os.path.dirname(folder.rstrip(os.sep))
-            name = os.path.basename(folder.rstrip(os.sep))
-            if name.lower() == 'build':
-                name = os.path.basename(parent) or 'terrain'
-                parent = os.path.dirname(parent)
-            self._set_out(os.path.join(parent, f'{name} packed'))
+            # Where it went last time, if the project remembers and the place
+            # is still there. A remembered path that has since been deleted
+            # is worse than no memory at all -- it points somewhere that will
+            # fail at the end of a pack -- so it falls through to the guess.
+            remembered = None
+            saved = settings_toml.load(folder)
+            if saved is not None:
+                was = saved.tool.get('last_output')
+                if isinstance(was, str) and os.path.isdir(
+                        os.path.dirname(was.rstrip(os.sep)) or '.'):
+                    remembered = was
+            if remembered:
+                # remember=False on both branches below: neither is a choice
+                # the author made. Writing a guess into the file would make
+                # merely opening a folder a change to it.
+                self._set_out(remembered, remember=False)
+            else:
+                # Beside the build folder, named after it. A guess, and shown,
+                # so it is corrected before packing rather than discovered
+                # after.
+                parent = os.path.dirname(folder.rstrip(os.sep))
+                name = os.path.basename(folder.rstrip(os.sep))
+                if name.lower() == 'build':
+                    name = os.path.basename(parent) or 'terrain'
+                    parent = os.path.dirname(parent)
+                self._set_out(os.path.join(parent, f'{name} packed'),
+                              remember=False)
         self._load_folder(folder)
         self.statusBar().showMessage(folder)
         if ask:
             self._offer_setup(folder)
+
+    def _choose_project(self, folder, ask=True):
+        """Which settings file to open. None for a folder with none.
+
+        False means the author dismissed the chooser, which is different from
+        having nothing to choose: one is "not this folder after all", the
+        other is "a folder not set up yet".
+        """
+        found = settings_toml.candidates(folder)
+        if len(found) <= 1:
+            return found[0] if found else None
+        if not ask:
+            return found[0]
+        names = [os.path.basename(p) for p in found]
+        # Told apart by what is in them, not just by name: two projects over
+        # the same art differ in their settings, and the object count is the
+        # cheapest true thing to say about one.
+        labels = []
+        for path, name in zip(found, names):
+            settings = settings_toml.load_path(path)
+            n = len(settings.objects) if settings else 0
+            labels.append(f'{name}  --  {n} object{"" if n == 1 else "s"}')
+        picked, ok = QInputDialog.getItem(
+            self, APP_NAME,
+            f'{os.path.basename(folder.rstrip(os.sep))} holds '
+            f'{len(found)} settings files.\n\nWhich one?',
+            labels, 0, False)
+        if not ok:
+            return False
+        return found[labels.index(picked)]
+
+    def _warn_about_orphans(self, folder):
+        """Say when settings describe art that is no longer here.
+
+        Said once, on open, and not acted on: the entries stay until a save,
+        so looking at a project does not edit it. The words avoid "orphan"
+        and "stale" -- what the author needs to know is that some settings
+        point at pictures that are gone.
+        """
+        project = settings_toml.Project.for_folder(folder, self._project_path)
+        try:
+            _names, objects, _notes = st.scan_terrain(folder)
+            sprites = [r['name'] for r in st.sprite_records(folder)]
+        except Exception:
+            return
+        said = project.find_orphans(objects, sprites)
+        if not said:
+            return
+        shown = ', '.join(said[:4])
+        more = f' and {len(said) - 4} more' if len(said) > 4 else ''
+        self._say('err',
+                  f'  note: {len(said)} setting(s) describe pictures that are '
+                  f'no longer in this folder: {shown}{more}. They are left '
+                  f'alone until you save, which drops them.')
 
     def _migrate_legacy(self, folder):
         """Fold the SpriteEditor-era settings into the TOML, then offer to
@@ -1046,10 +1159,26 @@ class Window(QMainWindow):
                 return True
         return False
 
-    def _set_out(self, path):
+    def _set_out(self, path, remember=True):
+        # Absolute, because a project may be opened from anywhere and a
+        # relative path would mean somewhere else the next time.
+        path = os.path.abspath(path)
         self._out_dir = path
         self._out_label.setText(f'Output: {_elide(path, 64)}')
         self._out_label.setToolTip(path)
+        if remember and self._folder:
+            self._remember_output(path)
+
+    def _remember_output(self, path):
+        """Keep the output folder with the project, not with the machine."""
+        saved = settings_toml.load(self._folder)
+        if saved is None or saved.problems:
+            return          # nothing to write into, or a file we cannot read
+        if saved.tool.get('last_output') == path:
+            return          # unchanged; do not rewrite the file to say so
+        saved.problems = []
+        saved.tool['last_output'] = path
+        settings_toml.save(self._folder, saved)
 
     def _choose_out(self):
         folder = QFileDialog.getExistingDirectory(self, 'Where to write')
@@ -1128,6 +1257,8 @@ class Window(QMainWindow):
         for problem in self._sprites.problems:
             self._say('err', f'  note: {problem}')
         self._show_options(folder)
+        self._sync_save_actions()
+        self._warn_about_orphans(folder)
         self._show_palette(os.path.join(folder, st.PALETTE_NAME))
         self._count_colours(rows, token)
 
@@ -1182,10 +1313,93 @@ class Window(QMainWindow):
         self._palette.setText('No palette.png yet. Pack with the palette '
                               'sheet enabled to draw one.')
 
+    # ------------------------------------------------------------- save --
+
+    def unsaved(self):
+        """Which tables differ from the settings file, by name."""
+        return [name for name, table in (('object', self._objects),
+                                         ('sprite', self._sprites))
+                if table.dirty]
+
+    def save_project(self):
+        """Write whatever has unsaved edits. Returns whether it got them all."""
+        if not self._folder:
+            return True
+        done = True
+        if self._objects.dirty:
+            done = self._save_objects() and done
+        if self._sprites.dirty:
+            done = self._save_sprites() and done
+        self._sync_save_actions()
+        return done
+
+    def save_project_as(self):
+        """Name the settings file, keep working in it.
+
+        The way a second project over the same art comes to exist: the folder
+        keeps whatever it had, and this becomes the file the window is
+        editing.
+        """
+        if not self._folder:
+            return
+        suggested = os.path.join(
+            self._folder,
+            f'{os.path.basename(self._folder.rstrip(os.sep))}'
+            f'{settings_toml.SETTINGS_TOML_SUFFIX}')
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Save the settings as', suggested,
+            f'spritetool settings (*{settings_toml.SETTINGS_TOML_SUFFIX})')
+        if not path:
+            return
+        if not path.lower().endswith(settings_toml.SETTINGS_TOML_SUFFIX):
+            # The suffix is what makes the file ours, and what finds it
+            # again; a name without it would simply not be seen next time.
+            path += settings_toml.SETTINGS_TOML_SUFFIX
+        project = settings_toml.Project.for_folder(self._folder)
+        for stem, values in self._objects.values():
+            project.objects[stem.lower()] = list(values)
+        project.save(path)
+        self._say('out', f'wrote {os.path.basename(path)}')
+        self._load_folder(self._folder)
+
+    def _sync_save_actions(self):
+        """Save is only offered when there is something to write."""
+        if hasattr(self, '_save_action'):
+            self._save_action.setEnabled(bool(self._folder)
+                                         and bool(self.unsaved()))
+        if hasattr(self, '_save_as_action'):
+            self._save_as_action.setEnabled(bool(self._folder))
+
+    def closeEvent(self, event):
+        """Do not lose unsaved edits to a window being closed.
+
+        Cancel has to actually cancel -- ignoring the event -- or the dialog
+        is a formality that closes anyway.
+        """
+        pending = self.unsaved() if self._folder else []
+        if not pending:
+            event.accept()
+            return
+        what = ' and '.join(pending)
+        answer = QMessageBox.question(
+            self, 'Unsaved settings',
+            f'The {what} table has changes that are not in '
+            f'{settings_toml.SETTINGS_TOML_NAME} yet.\n\nSave them before '
+            f'closing?',
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if answer == QMessageBox.Cancel:
+            event.ignore()
+            return
+        if answer == QMessageBox.Save and not self.save_project():
+            event.ignore()      # a save that could not finish is not a close
+            return
+        event.accept()
+
     def _save_sprites(self):
         """Write the playback choices back to the settings file."""
         if not self._folder:
-            return
+            return False
         if self._sprites.problems:
             # A row that does not add up is showing a record the packer would
             # refuse. Saving from here would not fix it and might write a
@@ -1195,7 +1409,7 @@ class Window(QMainWindow):
                 'Some sprite records do not match their sheets:\n\n'
                 + '\n'.join(self._sprites.problems[:6])
                 + '\n\nFix the frame count or the sheet first.')
-            return
+            return False
         path = self._sprites.save(self._folder)
         if path is None:
             QMessageBox.information(
@@ -1204,13 +1418,14 @@ class Window(QMainWindow):
                 f'rather than {settings_toml.SETTINGS_TOML_NAME}.\n\nPack '
                 f'it once, or convert it when asked, and the records move '
                 f'into the settings file where they can be edited here.')
-            return
+            return False
         self._say('out', f'wrote {os.path.basename(path)}')
         self._load_folder(self._folder)
+        return True
 
     def _save_objects(self):
         if not self._folder:
-            return
+            return False
         if self._objects.problems:
             # The table could not read what is there, so it is showing
             # defaults. Writing those back would replace settings nobody
@@ -1222,10 +1437,11 @@ class Window(QMainWindow):
                 f'showing what is in it:\n\n'
                 + '\n'.join(self._objects.problems[:4])
                 + '\n\nFix the file first; saving now would overwrite it.')
-            return
+            return False
         path = self._objects.save(self._folder)
         self._say('out', f'wrote {os.path.basename(path)}')
         self._load_folder(self._folder)
+        return True
 
     # ----------------------------------------------------------- refresh --
 
