@@ -343,11 +343,6 @@ SpriteEditor writes).
   `index.txt` is built from it, and skips the synthetic `.inf` too -- an
   index naming an entry the archive does not hold crashes the game on the
   generator screen.
-- Both GUI tables mix in `_MultiEdit`: an edit on a selected row is applied
-  to every other selected row. Checkboxes and dropdowns copy as they stand;
-  a spin box applies the *step* rather than the value, so rows deliberately
-  set apart stay apart. `_spreading` guards the reentrancy, since setting the
-  other rows fires their signals in turn.
 - `settings_toml.Project` holds a terrain's settings in memory. The tables
   edit it and set one `dirty`, rather than each writing its own file --
   there were three separate dirty flags before, and two guards that had to be

@@ -11,7 +11,7 @@ import contextlib
 import os
 import sys
 
-from PySide6.QtCore import QEvent, Qt, QSize
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QFont, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
@@ -245,124 +245,7 @@ def _centred(widget):
     return holder
 
 
-class _MultiEdit:
-    """Applies one row's edit to every other selected row.
-
-    Selecting five objects and setting them all to `floor` should be one
-    action, not five. A checkbox or a choice is copied across as it stands;
-    a number is applied as the *step* that was just taken, so weights of 4
-    and 6 nudged up become 5 and 7 rather than both becoming 5. Their
-    relationship is usually the thing the author arranged on purpose.
-
-    Reentrancy matters: setting the other rows fires their own signals, which
-    would come back here and try to spread again. `_spreading` stops that.
-    """
-
-    def __init__(self, *args, **kwargs):
-        # Cooperative: the mixin sits ahead of QTableWidget in the MRO, so
-        # the table's own arguments pass through rather than stopping here.
-        super().__init__(*args, **kwargs)
-        self._spreading = False
-        #: Last value seen per (row, column), so a spin box's change can be
-        #: read as a step rather than a destination.
-        self._was = {}
-        #: The rows selected when the mouse last went down on a cell widget.
-        self._pressed_rows = set()
-
-    def _rows_with(self, row):
-        """The selected rows, when `row` is one of them. Otherwise just it.
-
-        The selection as it was when the mouse went down, not as it is now.
-        Pressing a spin box's arrow moves focus into that spin box first, and
-        a cell widget taking focus can collapse the table's selection to its
-        own row -- so by the time valueChanged arrives, the other rows the
-        author had chosen may no longer be selected. `_pressed_rows` is what
-        they picked; it is preferred whenever the edited row is among them.
-        """
-        chosen = {i.row() for i in self.selectedIndexes()}
-        if self._pressed_rows and row in self._pressed_rows:
-            chosen = set(self._pressed_rows)
-        return sorted(chosen) if row in chosen and len(chosen) > 1 else [row]
-
-    def _note_selection(self):
-        """Remember the selection before a click can disturb it."""
-        self._pressed_rows = {i.row() for i in self.selectedIndexes()}
-
-    def eventFilter(self, watched, event):
-        # Every cell widget is watched, so a press on any of them is seen
-        # before the widget itself handles it -- which is where focus moves
-        # and the selection can change.
-        if event.type() == QEvent.MouseButtonPress:
-            self._note_selection()
-        return super().eventFilter(watched, event)
-
-    def _spread(self, row, col):
-        if self._spreading:
-            return
-        source = self.cellWidget(row, col)
-        rows = self._rows_with(row)
-        step = None
-        if isinstance(source, QSpinBox):
-            before = self._was.get((row, col), source.value())
-            step = source.value() - before
-        self._was[(row, col)] = (source.value()
-                                 if isinstance(source, QSpinBox) else None)
-        if len(rows) > 1:
-            self._spreading = True
-            try:
-                for other in rows:
-                    if other == row:
-                        continue
-                    self._copy_cell(source, other, col, step)
-            finally:
-                self._spreading = False
-        self._touch()
-
-    def _copy_cell(self, source, row, col, step):
-        target = self.cellWidget(row, col)
-        if target is None:
-            return
-        if isinstance(source, QSpinBox) and isinstance(target, QSpinBox):
-            # By the step, not to the value: two rows set apart on purpose
-            # stay set apart.
-            if step:
-                target.setValue(target.value() + step)
-            # Noted here, because this row's own _spread is suppressed while
-            # the spread runs -- so nothing else would record what it now
-            # holds, and its next edit would be measured from a value it left
-            # behind two edits ago.
-            self._was[(row, col)] = target.value()
-            return
-        if isinstance(source, QComboBox) and isinstance(target, QComboBox):
-            target.setCurrentIndex(source.currentIndex())
-            return
-        box = source.findChild(QCheckBox) if source else None
-        other = target.findChild(QCheckBox) if target else None
-        if box is not None and other is not None:
-            other.setChecked(box.isChecked())
-
-    def _remember_values(self):
-        """Note every spin box, and watch every cell widget for a press.
-
-        Called once the rows are built. The watching is what lets
-        `_rows_with` see the selection as it was before the click, and the
-        children are watched too -- a checkbox sits inside a holder widget,
-        and the press lands on the checkbox.
-        """
-        self._was = {}
-        for row in range(self.rowCount()):
-            for col in range(self.columnCount()):
-                widget = self.cellWidget(row, col)
-                if widget is None:
-                    continue
-                if isinstance(widget, QSpinBox):
-                    self._was[(row, col)] = widget.value()
-                widget.installEventFilter(self)
-                for child in widget.findChildren(QWidget):
-                    child.installEventFilter(self)
-
-
-class ObjectTable(_MultiEdit, QTableWidget):
+class ObjectTable(QTableWidget):
     """The six settings the guide gives every object, one row each.
 
     The lowest-risk useful thing a window can do that a text editor cannot:
@@ -386,8 +269,6 @@ class ObjectTable(_MultiEdit, QTableWidget):
         self.verticalHeader().setVisible(False)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectRows)
-        # Several rows at once, so one edit can settle a whole group.
-        self.setSelectionMode(QTableWidget.ExtendedSelection)
         head = self.horizontalHeader()
         head.setSectionResizeMode(0, QHeaderView.Stretch)
         for i in range(1, len(self.COLUMNS)):
@@ -467,32 +348,27 @@ class ObjectTable(_MultiEdit, QTableWidget):
             keep.setChecked(not excluded.get(stem.lower(), False))
             keep.setToolTip('Off leaves this object out of the next pack. '
                             'The picture stays in the folder.')
-            keep.stateChanged.connect(
-                lambda state, r=row: self._spread(r, self.COL_INCLUDE))
+            keep.stateChanged.connect(self._touch)
             self.setCellWidget(row, self.COL_INCLUDE, _centred(keep))
 
             weight = QSpinBox()
             weight.setRange(1, 10)
             weight.setValue(values[0])
-            weight.valueChanged.connect(
-                lambda value, r=row: self._spread(r, self.COL_WEIGHT))
+            weight.valueChanged.connect(self._touch)
             self.setCellWidget(row, self.COL_WEIGHT, weight)
 
             for col, idx in zip(self.COL_FLAGS, (1, 2, 3, 4)):
                 box = QCheckBox()
                 box.setChecked(bool(values[idx]))
-                box.stateChanged.connect(
-                    lambda state, r=row, c=col: self._spread(r, c))
+                box.stateChanged.connect(self._touch)
                 self.setCellWidget(row, col, _centred(box))
 
             where = QComboBox()
             where.addItems(self.WHERE)
             where.setCurrentIndex(min(values[5], 3))
-            where.currentIndexChanged.connect(
-                lambda index, r=row: self._spread(r, self.COL_WHERE))
+            where.currentIndexChanged.connect(self._touch)
             self.setCellWidget(row, self.COL_WHERE, where)
 
-        self._remember_values()
         self._dirty = False
         return len(objects)
 
@@ -549,7 +425,7 @@ class ObjectTable(_MultiEdit, QTableWidget):
         return path
 
 
-class SpriteTable(_MultiEdit, QTableWidget):
+class SpriteTable(QTableWidget):
     """The sprite record: what a sheet of frames says about itself.
 
     A sheet is one tall picture and says nothing about how it is cut up, so
@@ -591,7 +467,6 @@ class SpriteTable(_MultiEdit, QTableWidget):
         self.verticalHeader().setVisible(False)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectRows)
-        self.setSelectionMode(QTableWidget.ExtendedSelection)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         head = self.horizontalHeader()
         head.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -668,21 +543,18 @@ class SpriteTable(_MultiEdit, QTableWidget):
                 play.setCurrentIndex(len(self.PLAYBACK))
             else:
                 play.setCurrentIndex(int(flags))
-            play.currentIndexChanged.connect(
-                lambda index, rr=r: self._spread(rr, self.COL_PLAYBACK))
+            play.currentIndexChanged.connect(self._touch)
             self.setCellWidget(r, self.COL_PLAYBACK, play)
 
             keep = QCheckBox()
             keep.setChecked(not excluded.get(name.lower(), False))
             keep.setToolTip('Off leaves this sprite out of the next pack. '
                             'The picture stays in the folder.')
-            keep.stateChanged.connect(
-                lambda state, rr=r: self._spread(rr, self.COL_INCLUDE))
+            keep.stateChanged.connect(self._touch)
             self.setCellWidget(r, self.COL_INCLUDE, _centred(keep))
 
             if row['problem']:
                 self.problems.append(f"{name}: {row['problem']}")
-        self._remember_values()
         self._dirty = False
         return len(rows)
 
