@@ -124,13 +124,13 @@ class DropZone(QFrame):
     #: Said in the label when nothing has been dropped, and as the tooltip
     #: wherever the zone is described. One sentence per thing that can be
     #: dropped, because the two do opposite jobs.
-    IDLE_TEXT = ('Drop a folder to build a terrain, a .dir archive to '
+    IDLE_TEXT = ('Drop a folder to set-up a terrain, a .dir archive to '
                  'extract it, or .img/.spr pictures to decode.')
     IDLE_TIP = ('A folder is prepared as a terrain project.\n'
                 'A .dir archive is decompressed and its contents written to '
                 'a folder.\n'
                 'Loose .img or .spr pictures are decoded to BMP; several at '
-                'once is fine.')
+                )
 
     def show_folder(self, folder):
         if not folder:
@@ -806,11 +806,11 @@ class Window(QMainWindow):
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setFont(QFont('Menlo', 11))
-        self._log.setPlaceholderText(
-            'What the packer says appears here.\n\n'
-            'The same notes the command line prints: colours counted, art '
-            'refitted, objects widened, anything the terrain guide would '
-            'complain about.')
+        # self._log.setPlaceholderText(
+        #     'What the packer says appears here.\n\n'
+        #     'The same notes the command line prints: colours counted, art '
+        #     'refitted, objects widened, anything the terrain guide would '
+        #     'complain about.')
 
         self._changed = QTreeWidget()
         self._changed.setHeaderLabels(['What packing changed in your folder'])
@@ -829,7 +829,13 @@ class Window(QMainWindow):
         tabs.addTab(obj_page, 'Objects')
         tabs.addTab(spr_page, 'Sprites')
         tabs.addTab(self._palette, 'Palette')
-        tabs.addTab(self._changed, 'Changes')
+        # The Changes tab is not shown. The widget is still built and still
+        # filled after a pack -- everything that writes to it goes on working
+        # -- it simply has no tab of its own. Qt gives indexOf a widget that
+        # is in no tab bar as -1, and setTabText(-1, ...) does nothing, so
+        # the line that renames it is harmless rather than needing a guard.
+        # Put it back by uncommenting this.
+        # tabs.addTab(self._changed, 'Changes')
         self._tabs = tabs
 
         left = QWidget()
