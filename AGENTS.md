@@ -174,6 +174,20 @@ suite before a commit; `--no-numpy` only when the change touched colour
 counting or palette fitting, which is all numpy does here. A change that
 cannot affect a group -- a docstring, a GUI label -- does not need it run.
 
+**Never verify mouse behaviour with hand-built events.** A `QMouseEvent` sent
+through `sendEvent` is a restatement of what the author already believed the
+event stream to be, so it agrees with the code by construction: three separate
+drag bugs here passed such a test and did nothing whatever in the window.
+Drive the widgets with `QTest.mousePress` / `mouseMove` / `mouseRelease`
+instead, which go through Qt's own dispatch and so produce the `Enter`/`Leave`
+traffic, the implicit grab, and the press/release split that the hand-built
+version quietly omits. Read the values back off the live cell widgets rather
+than handles taken earlier, since a rebuilt row leaves a stale handle
+reporting what it held before. `gui/app.py --selftest` is where this goes; it
+already builds a real window over a real fixture. And say plainly that an
+offscreen pass is not the same as a human dragging in the window -- for
+anything mouse-driven, ask for that confirmation before committing.
+
 Non-zero if anything moved. What it covers:
 
 - `test/wa/`, `test/wwp online/`, `test/wwp aqua/` each hold a real
@@ -355,6 +369,16 @@ SpriteEditor writes).
   a spin box applies the *step* rather than the value, so rows deliberately
   set apart stay apart. `_spreading` guards the reentrancy, since setting the
   other rows fires their signals in turn.
+- Dragging down a column of tick boxes sets them all, the first box deciding
+  what the rest become. Three facts about Qt shape that code, each of which
+  broke a version of it: a cell widget swallows the press, so the viewport
+  never hears it and the press must be taken from the box; a box is about 18
+  pixels in a 30-pixel row, so the pointer leaves it at once and the moves
+  arrive at the viewport instead; and a `QCheckBox` toggles on *release*, so
+  the box a drag starts on never toggles itself, and the box it ends on would
+  toggle twice unless that release is eaten. A `Leave` on a box means only
+  that the pointer moved on -- treating it as the end of the gesture is what
+  made the first version do nothing at all.
 - `Options.settings` lets a caller hand the packer a `TerrainSettings`
   instead of having it read the folder's file. The window passes what its
   tables hold, so packing builds the terrain as it is on screen: pressing

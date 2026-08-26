@@ -312,22 +312,31 @@ class _MultiEdit:
         # the table's own arguments pass through rather than stopping here.
         super().__init__(*args, **kwargs)
         self._spreading = False
-        #: While a checkbox drag is in progress: the value the first box was
-        #: set to, which every box dragged over is set to as well. None when
-        #: no drag is running.
+        #: While a checkbox drag is in progress: the column being dragged and
+        #: the value the first box was set to, which every box dragged over is
+        #: set to as well. None when no drag is running.
         self._dragging = None
         #: Cells already dealt with in this drag, so crossing one twice --
         #: which a wavering pointer does constantly -- does not toggle it back.
         self._dragged = set()
+        # A drag is watched in two places, because no single widget sees all
+        # of it. A cell widget sits on top of the viewport and swallows the
+        # press outright -- the viewport never hears it -- so the press is
+        # taken from the box. The movement cannot come from the box: it is
+        # about 18 pixels square in a 30-pixel row, so the pointer leaves it
+        # almost immediately, and the moves that matter arrive at the
+        # viewport instead. Watching only one of the two is why earlier
+        # versions of this did nothing.
+        self.viewport().installEventFilter(self)
 
     def _watch_box(self, box, row, col):
-        """Let a checkbox take part in a drag across rows.
+        """Let a checkbox start a drag down its column.
 
         Dragging down a column of tick boxes is the obvious way to switch a
         run of objects off, and doing it one click at a time is the kind of
         work a window is supposed to save. The first box decides: whatever it
-        was set to is what the rest become, so a drag never toggles some on
-        and others off depending on where they started.
+        is about to become is what the rest become, so a drag never toggles
+        some on and others off depending on where they started.
         """
         box.installEventFilter(self)
         box.setProperty('cellRow', row)
@@ -336,57 +345,93 @@ class _MultiEdit:
     def eventFilter(self, watched, event):
         kind = event.type()
         if kind == QEvent.MouseButtonPress:
-            # Nothing is set here: the click reaches the box itself, which
-            # toggles and reports, and _begin_drag records what it became.
-            self._dragged = set()
-            self._dragging = None
+            # From the box itself: the viewport under it never sees this.
+            row = watched.property('cellRow')
+            col = watched.property('cellCol')
+            if row is not None and col is not None:
+                self._press_drag(int(row), int(col), watched)
         elif kind == QEvent.MouseMove and self._dragging is not None:
-            # The pointer is over some box; the one under it is the target,
-            # not the one the drag started on.
-            pos = watched.mapTo(self.viewport(), event.position().toPoint())
-            self._apply_drag(pos)
-        elif kind in (QEvent.MouseButtonRelease, QEvent.Leave):
+            # From the viewport, where the pointer still is once it has left
+            # the small box it started on. A Leave on the box means only that
+            # the pointer moved on, so it is not treated as the end of
+            # anything -- taking it for one was the original bug.
+            if watched is self.viewport():
+                self._apply_drag(event.position().toPoint())
+            else:
+                self._apply_drag(
+                    watched.mapTo(self.viewport(), event.position().toPoint()))
+        elif kind == QEvent.MouseButtonRelease:
+            dragged = self._dragging is not None and self._dragged
             self._dragging = None
             self._dragged = set()
+            if dragged and isinstance(watched, QCheckBox):
+                # The box the drag ended over already holds the drag's value.
+                # Letting the release through would toggle it a second time,
+                # undoing the one row the author finished on -- so the release
+                # is eaten. A plain click never gets here: nothing was dragged.
+                watched.setDown(False)
+                return True
         return super().eventFilter(watched, event)
 
     def _include_changed(self, row, col, state):
-        """A checkbox moved: start a drag from it, and spread as usual.
+        """A checkbox moved: spread it across the selection.
 
-        The first box of a drag is an ordinary click that happens to be the
-        start of one -- so it reports here like any other, and what it became
-        is what the drag carries. While a drag is running the boxes it sets
-        report here too, which is why the spread is skipped for them: their
-        value came from the drag, not from a selection.
+        Boxes the drag itself set are skipped: their value came from the drag,
+        not from an author picking rows, so there is nothing to spread.
         """
-        holder = self.cellWidget(row, col)
-        box = holder.findChild(QCheckBox) if holder is not None else None
-        if box is None:
-            return
         if self._dragging is not None and (row, col) in self._dragged:
-            # Set by the drag itself. Its value came from the drag, so there
-            # is nothing to spread and nothing to decide.
             self._touch()
             return
-        # An ordinary change: it spreads to the selection as any edit does,
-        # and doubles as the start of a drag if the mouse then moves.
-        self._begin_drag(row, col, box.isChecked())
         self._spread(row, col)
 
-    def _begin_drag(self, row, col, checked):
-        """Note what the first box in a drag was set to."""
-        self._dragging = (col, bool(checked))
-        self._dragged = {(row, col)}
+    def _press_drag(self, row, col, box):
+        """Arm a drag from the press, before the box under it has toggled.
+
+        A QCheckBox toggles on *release*, not on press -- and a drag ends its
+        release somewhere else entirely, so the box it started on never
+        toggles and never emits its signal. Waiting on that signal to learn
+        what the drag carries therefore waits forever. The value is worked out
+        here instead: the box is about to become the opposite of what it reads
+        now, and that is what every box dragged over becomes.
+
+        The row is only armed, not set. A press that turns out to be a plain
+        click still ends on this box and toggles it in the ordinary way; were
+        it set here as well it would be toggled twice and land back where it
+        started. `_apply_drag` sets it as soon as the pointer moves off, which
+        is the moment the gesture is known to be a drag rather than a click.
+        """
+        self._dragging = (col, not box.isChecked(), row)
+        self._dragged = set()
+
+    def _box_at(self, row, col):
+        """The checkbox in a cell, or None where the cell holds something else."""
+        holder = self.cellWidget(row, col)
+        return holder.findChild(QCheckBox) if holder is not None else None
 
     def _apply_drag(self, pos):
-        """Set whatever box the pointer is over to the drag's value."""
-        col, value = self._dragging
-        index = self.indexAt(pos)
-        row = index.row()
-        if row < 0 or (row, col) in self._dragged:
+        """Set whatever box the pointer is over to the drag's value.
+
+        `pos` is already in viewport coordinates, which is what `indexAt`
+        wants -- the viewport is where the gesture is watched.
+        """
+        col, value, first = self._dragging
+        if first is not None:
+            # The pointer has moved, so this is a drag: the box it started on
+            # is set here rather than waiting for a release that will land
+            # somewhere else. Marked done so its own release cannot toggle it
+            # back.
+            self._dragging = (col, value, None)
+            self._set_box(first, col, value)
+        row = self.indexAt(pos).row()
+        if row < 0:
             return
-        holder = self.cellWidget(row, col)
-        box = holder.findChild(QCheckBox) if holder is not None else None
+        self._set_box(row, col, value)
+
+    def _set_box(self, row, col, value):
+        """Set one box to the drag's value, once."""
+        if (row, col) in self._dragged:
+            return
+        box = self._box_at(row, col)
         if box is None:
             return
         self._dragged.add((row, col))
@@ -2219,6 +2264,66 @@ QPushButton#primary { font-weight: 600; }
 """
 
 
+
+def _check_drag(table):
+    """Drag down a column of tick boxes, with the mouse Qt itself delivers.
+
+    Hand-built QMouseEvents sent with sendEvent are a restatement of whatever
+    the author expected the event stream to be, so they agree with the code by
+    construction: the first version of this drag passed such a test and did
+    nothing at all in the window. QTest goes through Qt's real dispatch, which
+    is where the Enter/Leave traffic and the implicit grab come from -- and a
+    stray Leave cancelling the drag was the actual bug.
+    """
+    from PySide6.QtTest import QTest
+
+    col = table.COL_INCLUDE
+    rows = min(table.rowCount(), 4)
+    if rows < 3:
+        print(f'drag: only {rows} row(s), not checked')
+        return True
+
+    def box(row):
+        holder = table.cellWidget(row, col)
+        return holder.findChild(QCheckBox) if holder is not None else None
+
+    boxes = [box(r) for r in range(rows)]
+    if any(b is None for b in boxes):
+        print('gui selftest FAILED: no tick box to drag')
+        return False
+    for b in boxes:
+        b.setChecked(True)
+
+    # Where each row sits in the viewport, so the drag is aimed the way a
+    # pointer is: at the table, not at a widget it happens to contain.
+    def centre(row):
+        rect = table.visualRect(table.model().index(row, col))
+        return rect.center()
+
+    # Rows 0..last-1 are dragged over; the last row is left alone, so the
+    # drag is shown to stop where the pointer stopped rather than running on.
+    last = rows - 1
+    QTest.mousePress(boxes[0], Qt.LeftButton)
+    for row in range(1, last):
+        QTest.mouseMove(table.viewport(), centre(row))
+        QApplication.processEvents()
+    QTest.mouseRelease(table.viewport(), Qt.LeftButton, pos=centre(last - 1))
+    QApplication.processEvents()
+
+    # Rows 0..last-1 were dragged over and take the drag's value; the rest
+    # were never touched and keep theirs.
+    # Read the cells again rather than the handles taken earlier: a box that
+    # changed may have been rebuilt, and a stale handle then reports the value
+    # it held before the drag.
+    got = [box(r).isChecked() for r in range(rows)]
+    want = [False] * last + [True] * (rows - last)
+    print(f'drag: {got} (dragged over rows 0..{last - 1} of {rows})')
+    if got != want:
+        print(f'gui selftest FAILED: drag gave {got}, wanted {want}')
+        return False
+    return True
+
+
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     selftest = '--selftest' in argv
@@ -2282,6 +2387,9 @@ def main(argv=None):
                     print('gui selftest FAILED: refresh did not track the '
                           'folder')
                     return 1
+
+            if not _check_drag(window._objects):
+                return 1
         app.processEvents()
         print('gui selftest ok')
         return 0
