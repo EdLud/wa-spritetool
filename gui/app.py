@@ -870,6 +870,18 @@ class Window(QMainWindow):
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setFont(QFont('Menlo', 11))
+        # Scroll sideways rather than wrap. These lines are the packer's own,
+        # written for a terminal: a note naming a file and two dimensions runs
+        # past a hundred characters, and folding it into a narrow pane turned
+        # one note into six ragged rows. Unwrapped, each note is one line and
+        # the eye can run down them.
+        self._log.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self._log.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._log.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # A log is worth copying out of, and worth reading back through
+        # without it jumping to the end as the next line lands.
+        self._log.setTextInteractionFlags(
+            Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         # self._log.setPlaceholderText(
         #     'What the packer says appears here.\n\n'
         #     'The same notes the command line prints: colours counted, art '
@@ -1998,7 +2010,14 @@ class Window(QMainWindow):
     def _say(self, stream, text):
         if not text.strip():
             return
+        # Follow the tail only when already at it. A pack prints steadily,
+        # and scrolling back to read a note should not be undone by the next
+        # one arriving.
+        bar = self._log.verticalScrollBar()
+        following = bar.value() >= bar.maximum() - 4
         self._log.appendPlainText(text)
+        if following:
+            bar.setValue(bar.maximum())
 
     def _ask(self, q):
         """A Question, as a dialog. The child is blocked until this answers."""
