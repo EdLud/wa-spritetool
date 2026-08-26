@@ -379,6 +379,27 @@ SpriteEditor writes).
   toggle twice unless that release is eaten. A `Leave` on a box means only
   that the pointer moved on -- treating it as the end of the gesture is what
   made the first version do nothing at all.
+- The Recents menu lists every remembered project, the open one included --
+  marked, and the only one without a shortcut number, so Cmd+1 stays "the
+  project before this one". Filtering the open project out of the list
+  instead made the menu empty for anyone who had opened exactly one, which
+  is everyone on a first run.
+- Both tables' `save(folder, path=None)` write to `path` when the window has
+  a project open, since `settings_toml.save(folder, ...)` resolves to
+  `candidates(folder)[0]` -- whichever name sorts first, not the one on
+  screen. A folder with two projects otherwise saves into the wrong one.
+- `Recents` keeps the projects opened before in `QSettings`, which is the
+  platform's own place for such things -- nothing of ours is written beside
+  the terrains. It stores settings-file paths rather than folders, since a
+  folder may hold several projects and reopening the folder would lose which
+  was being edited. Paths are filtered on the way out rather than pruned on
+  the way in: a project on an unmounted drive is absent, not forgotten.
+- Naming a project happens once, when a folder is set up, and the named file
+  is written empty right then. Everything downstream settles into
+  `candidates(folder)[0]`, so creating it first is what makes the chosen name
+  the file being edited -- otherwise the migration writes `SETTINGS_TOML_NAME`
+  and the project the author just named is never opened. An empty name sets
+  nothing up and writes nothing.
 - `Options.settings` lets a caller hand the packer a `TerrainSettings`
   instead of having it read the folder's file. The window passes what its
   tables hold, so packing builds the terrain as it is on screen: pressing

@@ -11,7 +11,7 @@ import contextlib
 import os
 import sys
 
-from PySide6.QtCore import QEvent, Qt, QSize
+from PySide6.QtCore import QEvent, QSettings, Qt, QSize
 from PySide6.QtGui import QAction, QFont, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
@@ -62,6 +62,53 @@ def _elide(path, keep=52):
     return path if len(path) <= keep else '...' + path[-(keep - 3):]
 
 
+#: How many recent projects are remembered. Ten is the most a Cmd+number
+#: shortcut can reach -- Cmd+0 would be the tenth, and a list longer than the
+#: keys that open it is a list whose tail nobody uses.
+RECENT_LIMIT = 10
+
+
+class Recents:
+    """The projects opened before, newest first, kept between runs.
+
+    A list of settings-file paths rather than folders: a folder may hold
+    several projects, and reopening the folder would lose which one was
+    being edited. QSettings puts them where each platform keeps such things
+    -- the registry on Windows, a plist on macOS -- so nothing of ours has
+    to be written beside the terrains.
+    """
+
+    KEY = 'recent/projects'
+
+    def __init__(self, store=None):
+        self._store = store if store is not None else QSettings(APP_NAME,
+                                                                APP_NAME)
+
+    def paths(self):
+        """The remembered projects that are still there.
+
+        Checked on the way out rather than pruned on the way in: a project
+        on a drive that is not mounted right now has not been forgotten, it
+        is merely absent, and it comes back when the drive does.
+        """
+        got = self._store.value(self.KEY) or []
+        if isinstance(got, str):
+            # A single value comes back as a bare string on some backends.
+            got = [got]
+        return [p for p in got if isinstance(p, str) and p]
+
+    def add(self, path):
+        """Put `path` at the front, without letting it appear twice."""
+        path = os.path.abspath(path)
+        kept = [p for p in self.paths() if os.path.abspath(p) != path]
+        self._store.setValue(self.KEY, [path] + kept[:RECENT_LIMIT - 1])
+
+    def forget(self, path):
+        path = os.path.abspath(path)
+        self._store.setValue(
+            self.KEY, [p for p in self.paths() if os.path.abspath(p) != path])
+
+
 class DropZone(QFrame):
     """Where a folder or an archive lands. Also a button, for people who do
     not drag.
@@ -92,11 +139,23 @@ class DropZone(QFrame):
         return (os.path.isfile(path)
                 and path.lower().endswith(cls.PICTURE_EXTS))
 
-    def __init__(self, on_folder, on_archive=None, on_pictures=None):
+    @classmethod
+    def is_project(cls, path):
+        """A settings file, which opens the terrain it describes.
+
+        Dropping one is how a folder with two projects is opened on the one
+        that is wanted, without being asked afterwards which it was.
+        """
+        return (os.path.isfile(path) and path.lower().endswith(
+            settings_toml.SETTINGS_TOML_SUFFIX.lower()))
+
+    def __init__(self, on_folder, on_archive=None, on_pictures=None,
+                 on_project=None):
         super().__init__()
         self._on_folder = on_folder
         self._on_archive = on_archive
         self._on_pictures = on_pictures
+        self._on_project = on_project
         self.setAcceptDrops(True)
         self.setObjectName('dropzone')
         self.setMinimumHeight(96)
@@ -124,26 +183,38 @@ class DropZone(QFrame):
     #: Said in the label when nothing has been dropped, and as the tooltip
     #: wherever the zone is described. One sentence per thing that can be
     #: dropped, because the two do opposite jobs.
-    IDLE_TEXT = ('Drop a folder to set-up a terrain, a .dir archive to '
-                 'extract it, or .img/.spr pictures to decode.')
+    IDLE_TEXT = ('Drop a folder to set-up a terrain, a project file to '
+                 'open it, a .dir archive to extract it, or .img/.spr '
+                 'pictures to decode.')
     IDLE_TIP = ('A folder is prepared as a terrain project.\n'
+                f'A {settings_toml.SETTINGS_TOML_SUFFIX} file opens the '
+                'terrain it describes, on that project rather than another '
+                'in the same folder.\n'
                 'A .dir archive is decompressed and its contents written to '
                 'a folder.\n'
                 'Loose .img or .spr pictures are decoded to BMP; several at '
-                )
+                'once is fine.')
 
-    def show_folder(self, folder):
+    def show_folder(self, folder, project=None):
+        """Say what is open: the project by name, over the folder it is in.
+
+        The project is the thing being edited -- a folder may hold several,
+        and which one is loaded decides what every table shows -- so it is
+        the line in large type, with the folder underneath. A folder not set
+        up yet has no project to name, and falls back to its own name.
+        """
         if not folder:
             self._label.setText(self.IDLE_TEXT)
             self._label.setToolTip(self.IDLE_TIP)
             return
-        # The name, big, and the path beneath it small. A build folder is
-        # usually several levels down and the full path crowds out the one
-        # part that identifies it.
         parent, name = os.path.split(folder.rstrip(os.sep))
+        # The build folder is usually several levels down and the full path
+        # crowds out the part that identifies it, so the parent is elided.
+        under = os.path.join(_elide(parent), name) if project else _elide(parent)
         self._label.setText(
-            f'<div style="font-size:16px;font-weight:600">{name}</div>'
-            f'<div style="font-size:11px;color:gray">{_elide(parent)}</div>')
+            f'<div style="font-size:16px;font-weight:600">'
+            f'{project or name}</div>'
+            f'<div style="font-size:11px;color:gray">{under}</div>')
         self._label.setToolTip(folder)
 
     def _browse(self):
@@ -169,6 +240,8 @@ class DropZone(QFrame):
         path = paths[0]
         if os.path.isdir(path):
             return 'folder'
+        if self.is_project(path) and self._on_project is not None:
+            return 'project'
         if self.is_archive(path) and self._on_archive is not None:
             return 'archive'
         return None
@@ -195,6 +268,8 @@ class DropZone(QFrame):
             self._on_pictures(paths)
         elif kind == 'archive':
             self._on_archive(paths[0])
+        elif kind == 'project':
+            self._on_project(paths[0])
         else:
             self._on_folder(paths[0])
 
@@ -660,13 +735,19 @@ class ObjectTable(_MultiEdit, QTableWidget):
                 out[self.item(row, self.COL_NAME).text().lower()] = True
         return out
 
-    def save(self, folder):
-        """Write settings.spritetool.toml. Returns what it wrote to.
+    def save(self, folder, path=None):
+        """Write the settings file. Returns what it wrote to.
+
+        `path` is the project being edited, where the folder holds more than
+        one; without it the folder's own is found as before. Saving by folder
+        alone writes whichever file sorts first, which for a folder with two
+        projects is not necessarily the one on screen.
 
         The TOML is keyed by the object's stem and written deterministically,
         so a save only shows as a change where a value actually moved.
         """
-        toml = settings_toml.load(folder) or settings_toml.TerrainSettings()
+        toml = (settings_toml.load_path(path) if path
+                else settings_toml.load(folder)) or settings_toml.TerrainSettings()
         toml.problems = []
         toml.objects = {stem: list(values) for stem, values in self.values()}
         # Only this table's names, so a sprite switched off on the other tab
@@ -676,9 +757,10 @@ class ObjectTable(_MultiEdit, QTableWidget):
         toml.excluded = {k: v for k, v in toml.excluded.items()
                          if k not in mine}
         toml.excluded.update(self.excluded())
-        path = settings_toml.save(folder, toml)
+        written = (settings_toml.save_path(path, toml) if path
+                   else settings_toml.save(folder, toml))
         self._dirty = False
-        return path
+        return written
 
 
 class SpriteTable(_MultiEdit, QTableWidget):
@@ -695,23 +777,25 @@ class SpriteTable(_MultiEdit, QTableWidget):
     anything that does not add up is said in the row rather than saved for
     the build.
 
-    Playback is the one field an author has a free choice about, so it is a
-    named choice here rather than a number to look up. The rest is read-only:
-    the frame count and cell size have to agree with the sheet, and a value
-    typed into a table would want the arithmetic the packer already does.
+    Playback is a named choice rather than a number to look up. The frame
+    count and cell size are editable, since they are what an author has to
+    get right and a sheet says nothing about how it is cut up; the row stays
+    red until they agree with it.
 
-    `framerate` is not shown at all. The guide records that it does nothing
-    for debris and the game ignores it elsewhere too, so a column of zeroes
-    would be a question the author cannot usefully answer. It is read from
-    the file and written back untouched -- hidden, not dropped.
+    Two things are read but not shown. `framerate` does nothing for debris
+    and is ignored elsewhere too, so a column of zeroes would be a question
+    the author cannot usefully answer. Where a record came from is the
+    tool's own bookkeeping, not a setting -- it decided nothing an author
+    could act on, and took a column to say so. Both are written back
+    untouched: hidden, not dropped.
     """
 
     COLUMNS = ('Sprite', 'Include', 'Frames', 'Cell width', 'Cell height',
-               'Sheet', 'Playback', 'Record')
+               'Sheet', 'Playback')
 
     COL_NAME, COL_INCLUDE = 0, 1
     COL_FRAMES, COL_CELL_W, COL_CELL_H = 2, 3, 4
-    COL_SHEET, COL_PLAYBACK, COL_RECORD = 5, 6, 7
+    COL_SHEET, COL_PLAYBACK = 5, 6
 
     #: flags, from the terrain guide. The index is the value.
     PLAYBACK = ('play once and stop',
@@ -776,8 +860,7 @@ class SpriteTable(_MultiEdit, QTableWidget):
                     else f"{row['width']}x{row['height']}")
             sheet = '--' if size is None else f'{size[0]}x{size[1]}'
             cells = {self.COL_NAME: name,
-                     self.COL_SHEET: sheet,
-                     self.COL_RECORD: row['source'] or 'none'}
+                     self.COL_SHEET: sheet}
             for c, text in cells.items():
                 item = QTableWidgetItem(text)
                 if c:
@@ -881,15 +964,17 @@ class SpriteTable(_MultiEdit, QTableWidget):
         if hasattr(window, '_sync_save_actions'):
             window._sync_save_actions()
 
-    def save(self, folder):
+    def save(self, folder, path=None):
         """Write the playback values back. Returns the path, or None.
+
+        `path` is the project being edited -- see ObjectTable.save.
 
         Only sprites whose record the TOML already owns are written: a
         folder still carrying .spr.spd sidecars is one the author has not
         converted, and quietly starting a TOML for it from this table would
         leave two files disagreeing about the same sprite.
         """
-        toml = settings_toml.load(folder)
+        toml = settings_toml.load_path(path) if path else settings_toml.load(folder)
         if toml is None:
             self._dirty = False
             return None
@@ -919,9 +1004,10 @@ class SpriteTable(_MultiEdit, QTableWidget):
             box = self.cellWidget(r, self.COL_INCLUDE).findChild(QCheckBox)
             if box is not None and not box.isChecked():
                 toml.excluded[self.item(r, self.COL_NAME).text().lower()] = True
-        path = settings_toml.save(folder, toml)
+        written = (settings_toml.save_path(path, toml) if path
+                   else settings_toml.save(folder, toml))
         self._dirty = False
-        return path
+        return written
 
 
 class Window(QMainWindow):
@@ -942,8 +1028,12 @@ class Window(QMainWindow):
         #: Questions settled before packing, by key -- see _offer_setup.
         self._answers = {}
 
+        #: The projects opened before, for the Recents menu. Built before
+        #: the menus, which read it as they are put together.
+        self._recents = Recents()
+
         self._drop = DropZone(self.set_folder, self.take_archive_apart,
-                              self.decode_pictures)
+                              self.decode_pictures, self.open_project)
         self._pack = QPushButton('Pack to Level.dir')
         self._pack.setObjectName('primary')
         self._pack.setEnabled(False)
@@ -1075,6 +1165,23 @@ class Window(QMainWindow):
         # afterwards, so a folder can hold two settings files over the same
         # art and this is how the second one comes to exist.
         filemenu = self.menuBar().addMenu('&File')
+
+        # Open comes first: it is how a session starts when the terrain is
+        # one already set up, which after the first sitting is most of them.
+        open_act = QAction('&Open terrain project...', self)
+        open_act.setShortcut(QKeySequence.Open)              # Cmd+O / Ctrl+O
+        open_act.setStatusTip('Open a saved terrain project and the folder '
+                              'it describes')
+        open_act.setToolTip(open_act.statusTip())
+        open_act.triggered.connect(lambda: self.open_project())
+        filemenu.addAction(open_act)
+
+        # Recents is a submenu rather than a run of items in File, so the
+        # numbers that open them read as one list and File stays short.
+        self._recent_menu = filemenu.addMenu('Open &Recent')
+        self._rebuild_recents()
+        filemenu.addSeparator()
+
         save = QAction('&Save', self)
         save.setShortcut(QKeySequence.Save)                  # Cmd+S / Ctrl+S
         save.setStatusTip('Write the object and sprite tables to the '
@@ -1167,8 +1274,12 @@ class Window(QMainWindow):
 
     # ------------------------------------------------------------ folder --
 
-    def set_folder(self, folder, ask=True):
+    def set_folder(self, folder, ask=True, project=None):
         """Take `folder` as the terrain to pack.
+
+        `project` names which of the folder's settings files to open, where
+        the caller already knows -- opening one by name, or from Recents.
+        Without it the folder is asked about as before.
 
         `ask` says whether this call may open a dialog. It is a real property
         of the call rather than a hook for tests: everything here otherwise
@@ -1179,9 +1290,12 @@ class Window(QMainWindow):
         # Which project, where the folder holds more than one. Asked before
         # anything is read, since the answer decides what "this folder's
         # settings" means for the rest of the call.
-        self._project_path = self._choose_project(folder, ask)
-        if self._project_path is False:
-            return                      # the chooser was dismissed
+        if project is not None:
+            self._project_path = project
+        else:
+            self._project_path = self._choose_project(folder, ask)
+            if self._project_path is False:
+                return                  # the chooser was dismissed
 
         # Any folder may be a terrain now -- the name no longer decides. What
         # remains is the setup confirmation, shown for a folder that is not
@@ -1216,6 +1330,28 @@ class Window(QMainWindow):
                 if box.clickedButton() is not yes:
                     self._say('err', 'setting the folder up was declined')
                     return
+                # What the project is called. Asked here because this is the
+                # one moment the author is looking at a folder they have
+                # just chosen and knows what they mean it to be; asking at
+                # the first save would be asking about work already done.
+                # Empty means the question was not answered, so nothing is
+                # set up and no file is written -- an unnamed project would
+                # have to be named something, and picking for them is how a
+                # folder ends up with a file nobody meant to create.
+                named = self._ask_project_name(folder)
+                if not named:
+                    self._say('err', 'setting the folder up was cancelled: '
+                                     'no project name given')
+                    return
+                self._project_path = named
+                # Written now, empty, rather than left for the first save.
+                # Everything below settles into the folder's existing
+                # settings file, and creating it under the chosen name is
+                # what makes that file the chosen one -- otherwise the
+                # migration writes the default name and the project the
+                # author just named is never the one being edited.
+                settings_toml.save_path(
+                    named, settings_toml.TerrainSettings())
                 # Setting the folder up is also when its SpriteEditor-era
                 # files are read into the TOML -- and the point to offer
                 # clearing them away, while the author is still looking at
@@ -1247,7 +1383,7 @@ class Window(QMainWindow):
 
         self._folder = folder
         self._answers = {}
-        self._drop.show_folder(folder)
+        self._drop.show_folder(folder, self._project_name())
         self._pack.setEnabled(True)
         if self._out_dir is None:
             # Where it went last time, if the project remembers and the place
@@ -1284,9 +1420,170 @@ class Window(QMainWindow):
                 self._set_out(os.path.join(parent, f'{name} packed'),
                               remember=False)
         self._load_folder(folder)
+        # Remembered once the folder has actually loaded, so a project that
+        # could not be opened does not climb to the top of the list.
+        self._remember(self._project_path)
         self.statusBar().showMessage(folder)
         if ask:
             self._offer_setup(folder)
+
+    def _ask_project_name(self, folder):
+        """Ask what to call this project. The settings path, or None.
+
+        Empty at first rather than filled in with a guess: a prefilled box
+        is answered by pressing return, which is not the same as choosing,
+        and the name is what the Recents menu will show for years.
+        """
+        while True:
+            name, ok = QInputDialog.getText(
+                self, 'Name this project',
+                f'A name for this terrain project.\n\nIt is saved as this '
+                f'name plus {settings_toml.SETTINGS_TOML_SUFFIX} in\n'
+                f'{_elide(folder)}')
+            if not ok:
+                return None
+            name = name.strip()
+            if not name:
+                return None
+            # Only the parts a file name cannot hold. Anything else the
+            # author typed is theirs to keep -- spaces and capitals included.
+            cleaned = ''.join('-' if c in '/\\:' else c for c in name)
+            path = os.path.join(
+                folder, f'{cleaned}{settings_toml.SETTINGS_TOML_SUFFIX}')
+            if not os.path.exists(path):
+                return path
+            if QMessageBox.question(
+                    self, 'Already there',
+                    f'{os.path.basename(path)} is already in this folder.\n\n'
+                    f'Open that project instead?',
+                    QMessageBox.Open | QMessageBox.Cancel,
+                    QMessageBox.Open) == QMessageBox.Open:
+                return path
+
+    def open_project(self, path=None):
+        """Open a settings file, and the terrain folder holding it.
+
+        The project is the unit an author thinks in, so this is what Open
+        and the Recents menu both do. The folder comes from the file's own
+        place rather than being asked for separately.
+        """
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(
+                self, 'Open terrain project', self._folder or '',
+                f'spritetool projects (*{settings_toml.SETTINGS_TOML_SUFFIX})')
+            if not path:
+                return
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            # A remembered project whose file has since gone. Saying so and
+            # dropping it is better than an error from deeper in: the author
+            # asked for something that is not there any more.
+            QMessageBox.warning(
+                self, 'Not there any more',
+                f'{os.path.basename(path)} is no longer in\n'
+                f'{os.path.dirname(path)}.\n\nIt has been taken off the '
+                f'recent list.')
+            self._recents.forget(path)
+            self._rebuild_recents()
+            return
+        if not self._let_go_of_current():
+            return
+        folder = os.path.dirname(path)
+        # Set before the load, since it is what decides which of a folder's
+        # settings files the tables are filled from.
+        self._project_path = path
+        self.set_folder(folder, ask=False, project=path)
+
+    def _let_go_of_current(self):
+        """Settle unsaved edits before something else is opened.
+
+        Returns whether to go on. The same three answers as closing the
+        window, and for the same reason: opening another project drops what
+        is on screen, so it is the same loss and deserves the same question.
+        """
+        pending = self.unsaved() if self._folder else []
+        if not pending:
+            return True
+        what = ' and '.join(pending)
+        answer = QMessageBox.question(
+            self, 'Unsaved settings',
+            f'The {what} table has changes that are not saved yet.\n\n'
+            f'Save them before opening another project?',
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if answer == QMessageBox.Cancel:
+            return False
+        if answer == QMessageBox.Save:
+            return self.save_project()
+        return True
+
+    def _project_name(self):
+        """What this project is called, or None where it has no file yet."""
+        if not self._project_path:
+            return None
+        name = os.path.basename(self._project_path)
+        suffix = settings_toml.SETTINGS_TOML_SUFFIX
+        if name.lower().endswith(suffix.lower()):
+            name = name[:-len(suffix)]
+        return name or None
+
+    def _remember(self, path):
+        """Note a project as opened, and put it at the top of Recents."""
+        if not path:
+            return
+        self._recents.add(path)
+        self._rebuild_recents()
+
+    def _rebuild_recents(self):
+        """Fill the Recents submenu from the store.
+
+        Numbered from one, and the number is the shortcut: the first item is
+        the project opened before this one, which is the one an author
+        reaches for most.
+        """
+        menu = getattr(self, '_recent_menu', None)
+        if menu is None:
+            return
+        menu.clear()
+        # Every remembered project is listed, the one open included. Hiding
+        # it made the list empty for anyone who had opened exactly one
+        # project, which is everybody on their first day -- and after a quit
+        # and a reopen the thing you most want to click is the terrain you
+        # were just in. What the current project gets instead is no shortcut
+        # number, so Cmd+1 still means "the one before this".
+        here = os.path.abspath(self._project_path or '')
+        paths = self._recents.paths()
+        if not paths:
+            empty = menu.addAction('Nothing opened yet')
+            empty.setEnabled(False)
+            return
+        number = 0
+        for path in paths[:RECENT_LIMIT]:
+            current = os.path.abspath(path) == here
+            name = os.path.basename(path)
+            if name.lower().endswith(settings_toml.SETTINGS_TOML_SUFFIX.lower()):
+                name = name[:-len(settings_toml.SETTINGS_TOML_SUFFIX)]
+            shown = f'{name}  --  {_elide(os.path.dirname(path), 40)}'
+            act = QAction(f'{shown}   (open)' if current else shown, self)
+            if not current:
+                number += 1
+                if number <= 9:
+                    act.setShortcut(QKeySequence(f'Ctrl+{number}'))
+                elif number == RECENT_LIMIT:
+                    act.setShortcut(QKeySequence('Ctrl+0'))
+            act.setStatusTip(path)
+            act.setToolTip(path)
+            act.triggered.connect(lambda _=False, p=path: self.open_project(p))
+            menu.addAction(act)
+        menu.addSeparator()
+        clear = QAction('Clear the list', self)
+        clear.triggered.connect(self._clear_recents)
+        menu.addAction(clear)
+
+    def _clear_recents(self):
+        for path in self._recents.paths():
+            self._recents.forget(path)
+        self._rebuild_recents()
 
     def _choose_project(self, folder, ask=True):
         """Which settings file to open. None for a folder with none.
@@ -1871,7 +2168,7 @@ class Window(QMainWindow):
                 + '\n'.join(self._sprites.problems[:6])
                 + '\n\nFix the frame count or the sheet first.')
             return False
-        path = self._sprites.save(self._folder)
+        path = self._sprites.save(self._folder, self._project_path)
         if path is None:
             QMessageBox.information(
                 self, APP_NAME,
@@ -1899,7 +2196,7 @@ class Window(QMainWindow):
                 + '\n'.join(self._objects.problems[:4])
                 + '\n\nFix the file first; saving now would overwrite it.')
             return False
-        path = self._objects.save(self._folder)
+        path = self._objects.save(self._folder, self._project_path)
         self._say('out', f'wrote {os.path.basename(path)}')
         self._load_folder(self._folder)
         return True
@@ -2324,6 +2621,103 @@ def _check_drag(table):
     return True
 
 
+def _check_recents():
+    """Recents remembers, in order, without duplicates, and survives a run.
+
+    Kept in a temporary store rather than the real one: a test that writes
+    to the author's own recent list would put its fixtures in their File
+    menu.
+    """
+    import tempfile
+    from PySide6.QtCore import QSettings
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ini = os.path.join(tmp, 'recent.ini')
+        store = QSettings(ini, QSettings.IniFormat)
+        recent = Recents(store)
+        for name in ('one', 'two', 'three'):
+            recent.add(f'/t/{name}{settings_toml.SETTINGS_TOML_SUFFIX}')
+        newest = recent.paths()
+        # Newest first, and re-adding moves rather than duplicates.
+        recent.add(f'/t/one{settings_toml.SETTINGS_TOML_SUFFIX}')
+        moved = recent.paths()
+        over = RECENT_LIMIT + 4
+        for i in range(over):
+            recent.add(f'/t/p{i}{settings_toml.SETTINGS_TOML_SUFFIX}')
+        capped = len(recent.paths())
+        want = recent.paths()
+        store.sync()
+        # A fresh reader over the same file is what a later run of the
+        # program sees.
+        kept = Recents(QSettings(ini, QSettings.IniFormat)).paths()
+
+    ordered = newest[0].endswith(f'three{settings_toml.SETTINGS_TOML_SUFFIX}')
+    once = len(moved) == 3 and moved[0].endswith(
+        f'one{settings_toml.SETTINGS_TOML_SUFFIX}')
+    print(f'recents: newest first {ordered}, no duplicates {once}, '
+          f'capped at {capped}, survives a restart {kept == want}')
+    if not (ordered and once and capped == RECENT_LIMIT and kept == want):
+        print('gui selftest FAILED: recent projects are not kept properly')
+        return False
+    return True
+
+
+def _check_recent_menu(window):
+    """The one remembered project is listed, open or not.
+
+    The bug this stands against: the menu hid whichever project was open,
+    so an author who had opened exactly one -- everybody, on their first
+    day -- quit, reopened, and found an empty list. What the open project
+    loses is its shortcut number, not its place in the list, so Cmd+1 still
+    means the project before this one.
+    """
+    import tempfile
+    from PySide6.QtCore import QSettings
+
+    def listed():
+        return [a.text() for a in window._recent_menu.actions() if a.text()]
+
+    def numbered():
+        return [a.text().split('  --')[0].strip()
+                for a in window._recent_menu.actions()
+                if a.text() and a.shortcut().toString()]
+
+    was_store, was_project = window._recents, window._project_path
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QSettings(os.path.join(tmp, 'm.ini'), QSettings.IniFormat)
+        window._recents = Recents(store)
+        here = f'/t/here{settings_toml.SETTINGS_TOML_SUFFIX}'
+        before = f'/t/before{settings_toml.SETTINGS_TOML_SUFFIX}'
+        window._recents.add(before)
+        window._recents.add(here)
+
+        # Open: listed, marked, and not holding a number.
+        window._project_path = here
+        window._rebuild_recents()
+        open_listed = any('here' in t for t in listed())
+        open_keys = numbered()
+
+        # Nothing open, as after a restart: still listed, and numbered.
+        window._project_path = None
+        window._rebuild_recents()
+        shut_listed = any('here' in t for t in listed())
+        shut_keys = numbered()
+
+    window._recents, window._project_path = was_store, was_project
+    window._rebuild_recents()
+
+    good = (open_listed and shut_listed
+            and open_keys == ['before']         # Cmd+1 skips the open one
+            and shut_keys == ['here', 'before'])
+    print(f'recent menu: open project listed {open_listed}, listed after a '
+          f'restart {shut_listed}, Cmd+1 goes to {open_keys or [None]}')
+    if not good:
+        print('gui selftest FAILED: the recent menu hides projects it should '
+              'list')
+        return False
+    return True
+
+
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     selftest = '--selftest' in argv
@@ -2389,6 +2783,10 @@ def main(argv=None):
                     return 1
 
             if not _check_drag(window._objects):
+                return 1
+            if not _check_recents():
+                return 1
+            if not _check_recent_menu(window):
                 return 1
         app.processEvents()
         print('gui selftest ok')

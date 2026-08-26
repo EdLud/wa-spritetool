@@ -69,18 +69,27 @@ stores them) or **decompress** it (those files plus every picture decoded to
 an editable BMP), and -- for a decompress -- whether to write an animated GIF
 per sprite.
 
-**File** holds Save (Cmd+S) and Save As (Cmd+Shift+S). The object and sprite
-tables are edited in memory, so Save is what writes them; closing with unsaved
-changes asks first. **Options** holds three choices that belong to the terrain
+**File** holds Open (Cmd+O), Open Recent, Save (Cmd+S) and Save As
+(Cmd+Shift+S). Open takes a `.spritetool.toml` and opens the terrain it
+describes; **Open Recent** lists the projects you have opened before, kept
+between runs. The one currently open is listed too, marked, and it is the only
+one without a number, so Cmd+1 is always the project you were in before this
+one. The object and sprite tables are edited in memory, so Save is what
+writes them; closing, or opening something else, with unsaved changes asks
+first. **Options** holds three choices that belong to the terrain
 rather than to your machine -- automatic recolour on pack, compress sprites,
 and force -- so they travel in the settings file and the command line honours
 them too, printing what is in effect at the top of a run.
 
 A folder may hold more than one settings file: anything ending
 `.spritetool.toml`, so `Paradise Ruins.spritetool.toml` can sit beside another
-project over the same art. The window asks which one to open; the command line
-lists them and takes `--project=2` or `--project="Paradise Ruins"`. Save As is
-how the second one comes to exist.
+project over the same art. Setting a folder up asks what to call its project,
+and that is the name of its file; leaving the name empty sets nothing up.
+Dropping a `.spritetool.toml` on the window opens that project directly, which
+is the way past being asked which one you meant. The window otherwise asks; the
+command line lists them and takes `--project=2` or `--project="Paradise
+Ruins"`. Save As is how a second one comes to exist. Whichever is open is
+named above the drop zone.
 
 If a project mentions pictures that are no longer in the folder, opening it
 says so and leaves them alone. They are dropped the next time you save.
