@@ -2058,7 +2058,18 @@ class Window(QMainWindow):
                 self._tabs.indexOf(self._changed),
                 f'Changes ({self._changed.topLevelItemCount()})')
         if self._folder:
-            self._load_folder(self._folder)
+            # reuse=True, because packing wrote no settings. The folder is
+            # re-read for what the pack put in it -- a palette sheet, art
+            # borrowed on a first run -- but the tables keep what they hold.
+            # Without this, switching a sprite off and pressing Pack showed
+            # it switched back on: the file still said include, having never
+            # been asked to say otherwise.
+            was_dirty = self._objects.dirty or self._sprites.dirty
+            self._load_folder(self._folder, reuse=True)
+            if was_dirty:
+                self._objects._dirty = self._objects.rowCount() > 0
+                self._sprites._dirty = self._sprites.rowCount() > 0
+                self._sync_save_actions()
 
     def _refused(self, lines):
         """A pack that could not finish, with what stopped it.
