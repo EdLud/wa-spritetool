@@ -1105,6 +1105,15 @@ class Window(QMainWindow):
                 # marks it once the offer has been made, and leaves it
                 # unmarked when the offer is refused so it stands next time.
 
+        # A different terrain than the one already open. What is on screen
+        # belongs to the old one -- the log is its pack's notes, the output
+        # box is where *it* was going -- so both are let go of rather than
+        # carried across and quietly attributed to the new folder.
+        switching = self._folder is not None and folder != self._folder
+        if switching:
+            self._log.clear()
+            self._out_dir = None
+
         self._folder = folder
         self._answers = {}
         self._drop.show_folder(folder)
@@ -1114,12 +1123,18 @@ class Window(QMainWindow):
             # is still there. A remembered path that has since been deleted
             # is worse than no memory at all -- it points somewhere that will
             # fail at the end of a pack -- so it falls through to the guess.
+            # The folder itself, not just its parent. Packing creates the
+            # output folder, so a path that has never existed is fine -- but
+            # one the project remembers and that has since been deleted is a
+            # different thing: it names somewhere that was, and silently
+            # recreating it is not what the author meant by opening this
+            # terrain. Falling back to the guess beside the source says
+            # where it is going instead.
             remembered = None
             saved = settings_toml.load(folder)
             if saved is not None:
                 was = saved.tool.get('last_output')
-                if isinstance(was, str) and os.path.isdir(
-                        os.path.dirname(was.rstrip(os.sep)) or '.'):
+                if isinstance(was, str) and was and os.path.isdir(was):
                     remembered = was
             if remembered:
                 # remember=False on both branches below: neither is a choice

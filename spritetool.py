@@ -5228,7 +5228,7 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
             # What is in effect, not what the file said: a flag has already
             # overridden the field by here, and printing the file's answer
             # would report the opposite of what the run is about to do.
-            print('  settings: ' + ', '.join(
+            print('  Settings: ' + ', '.join(
                 f'{_k} {"on" if getattr(options, _f) else "off"}'
                 + (' (flag)' if _f in options.explicit else '')
                 for _k, _f in (('compress_spr', 'compress_spr'),
