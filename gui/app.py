@@ -1826,23 +1826,10 @@ class Window(QMainWindow):
     def start_pack(self):
         if not self._folder or (self._job and self._job.running):
             return
-        if self._objects.dirty or self._sprites.dirty:
-            what = ' and '.join(
-                [n for n, t in (('object', self._objects),
-                                ('sprite', self._sprites)) if t.dirty])
-            answer = QMessageBox.question(
-                self, 'Unsaved settings',
-                f'The {what} table has changes that are not in '
-                f'{settings_toml.SETTINGS_TOML_NAME} yet.\n\nSave them before '
-                f'packing?',
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
-            if answer == QMessageBox.Cancel:
-                return
-            if answer == QMessageBox.Save:
-                if self._objects.dirty:
-                    self._objects.save(self._folder)
-                if self._sprites.dirty:
-                    self._sprites.save(self._folder)
+        # Nothing is asked and nothing is written. Packing builds the
+        # terrain as it is on screen: the settings go to the packer directly,
+        # the same way the tables are the source of truth everywhere else in
+        # the window. Saving stays a thing the author does when they mean to.
 
         self._log.clear()
         self._changed.clear()
@@ -1850,7 +1837,8 @@ class Window(QMainWindow):
         self._pack.setEnabled(False)
         self.statusBar().showMessage('Packing...')
 
-        options = {'write_palette': True, 'jobs': self._jobs.value()}
+        options = {'write_palette': True, 'jobs': self._jobs.value(),
+                   'settings': self._session_settings()}
         self._job = PackJob(self)
         self._job.line.connect(self._say)
         self._job.question.connect(self._ask)

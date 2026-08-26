@@ -4843,6 +4843,11 @@ class Options:
     #: one-based index into the listed order, or the name itself. None means
     #: the folder had better hold at most one.
     project: Optional[str] = None
+    #: The settings to pack with, where the caller already has them. A window
+    #: holding unsaved edits is the source of truth about its own terrain, so
+    #: it hands them over rather than being made to write a file first. None
+    #: means read the folder's, which is what a command line does.
+    settings: Optional['settings_toml.TerrainSettings'] = None
     #: Questions settled ahead of time, by key. A key ending in a dot settles
     #: everything beneath it, which is what --defaults means: an opinion about
     #: borrowed art in general rather than about one piece of it.
@@ -5181,12 +5186,19 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
             # Which settings file, where the folder holds more than one.
             # Raises with the list when it cannot tell, which is the only
             # answer a command line can give to a question about intent.
-            chosen = choose_project(source_dir, options.project)
-            toml = (settings_toml.load_path(chosen)
-                    if chosen is not None else None)
-            if chosen is not None and len(
-                    settings_toml.candidates(source_dir)) > 1:
-                print(f'  project: {os.path.basename(chosen)}')
+            if options.settings is not None:
+                # Handed to us. The caller's copy is the terrain as it stands,
+                # unsaved edits and all -- reading the file underneath it
+                # would pack what was last written instead of what was asked
+                # for.
+                toml = options.settings
+            else:
+                chosen = choose_project(source_dir, options.project)
+                toml = (settings_toml.load_path(chosen)
+                        if chosen is not None else None)
+                if chosen is not None and len(
+                        settings_toml.candidates(source_dir)) > 1:
+                    print(f'  project: {os.path.basename(chosen)}')
             if toml is not None and toml.problems:
                 raise PackFailed(
                     f"Not packing {os.path.basename(source_dir)}: "

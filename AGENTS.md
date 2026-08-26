@@ -355,6 +355,11 @@ SpriteEditor writes).
   a spin box applies the *step* rather than the value, so rows deliberately
   set apart stay apart. `_spreading` guards the reentrancy, since setting the
   other rows fires their signals in turn.
+- `Options.settings` lets a caller hand the packer a `TerrainSettings`
+  instead of having it read the folder's file. The window passes what its
+  tables hold, so packing builds the terrain as it is on screen: pressing
+  Pack neither asks about unsaved edits nor writes them out. The command line
+  leaves it None and reads the file, as it always did.
 - `settings_toml.Project` holds a terrain's settings in memory. The tables
   edit it and set one `dirty`, rather than each writing its own file --
   there were three separate dirty flags before, and two guards that had to be
