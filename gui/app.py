@@ -577,10 +577,12 @@ class SpriteTable(_MultiEdit, QTableWidget):
     the file and written back untouched -- hidden, not dropped.
     """
 
-    COLUMNS = ('Sprite', 'Include', 'Frames', 'Cell', 'Sheet', 'Playback',
-               'Record')
+    COLUMNS = ('Sprite', 'Include', 'Frames', 'Cell width', 'Cell height',
+               'Sheet', 'Playback', 'Record')
 
-    COL_NAME, COL_INCLUDE, COL_PLAYBACK = 0, 1, 5
+    COL_NAME, COL_INCLUDE = 0, 1
+    COL_FRAMES, COL_CELL_W, COL_CELL_H = 2, 3, 4
+    COL_SHEET, COL_PLAYBACK, COL_RECORD = 5, 6, 7
 
     #: flags, from the terrain guide. The index is the value.
     PLAYBACK = ('play once and stop',
@@ -602,6 +604,9 @@ class SpriteTable(_MultiEdit, QTableWidget):
             head.setSectionResizeMode(i, QHeaderView.ResizeToContents)
         self.problems = []
         self._dirty = False
+        #: The colour a row is when its numbers add up. Taken from the table
+        #: rather than named, so it follows a dark theme as well as a light.
+        self._plain = self.palette().text()
         #: The record as read, by sprite name. Kept so a save writes back the
         #: fields the table does not show -- framerate above all -- rather
         #: than dropping them because they were not on screen.
@@ -641,25 +646,32 @@ class SpriteTable(_MultiEdit, QTableWidget):
             cell = ('--' if row['width'] is None or row['height'] is None
                     else f"{row['width']}x{row['height']}")
             sheet = '--' if size is None else f'{size[0]}x{size[1]}'
-            cells = [name, None,
-                     '--' if row['frames'] is None else str(row['frames']),
-                     cell, sheet, None,
-                     row['source'] or 'none']
-            for c, text in enumerate(cells):
-                if text is None:
-                    continue            # the playback column, filled below
+            cells = {self.COL_NAME: name,
+                     self.COL_SHEET: sheet,
+                     self.COL_RECORD: row['source'] or 'none'}
+            for c, text in cells.items():
                 item = QTableWidgetItem(text)
                 if c:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                if row['problem']:
-                    # The whole row is marked, not just the column at fault:
-                    # a frame count and a sheet disagree with each other, and
-                    # colouring one of them says the other is right.
-                    item.setForeground(Qt.red)
-                    item.setToolTip(str(row['problem']))
-                else:
-                    item.setToolTip(str(row['sheet']))
+                item.setToolTip(str(row['sheet']))
                 self.setItem(r, c, item)
+
+            # Frames and the cell size are the record, and the record is what
+            # an author has to get right -- a sheet says nothing about how it
+            # is cut up. So they are edited here rather than in the file, and
+            # the row says whether the numbers currently add up.
+            for col, key, top in ((self.COL_FRAMES, 'frames', 9999),
+                                  (self.COL_CELL_W, 'width', 9999),
+                                  (self.COL_CELL_H, 'height', 99999)):
+                spin = QSpinBox()
+                spin.setRange(0, top)
+                spin.setValue(int(row[key] or 0))
+                spin.setToolTip(
+                    'Frames stacked down the sheet' if key == 'frames'
+                    else f"Each frame's {key}")
+                spin.valueChanged.connect(
+                    lambda value, rr=r: self._recheck(rr))
+                self.setCellWidget(r, col, spin)
 
             play = QComboBox()
             play.addItems(self.PLAYBACK)
@@ -683,10 +695,54 @@ class SpriteTable(_MultiEdit, QTableWidget):
                 lambda state, rr=r: self._spread(rr, self.COL_INCLUDE))
             self.setCellWidget(r, self.COL_INCLUDE, _centred(keep))
 
-            if row['problem']:
-                self.problems.append(f"{name}: {row['problem']}")
+            # Judged from the widgets, so what is shown and what is
+            # complained about cannot disagree.
+            problem = self._recheck(r)
+            if problem:
+                self.problems.append(f'{name}: {problem}')
         self._dirty = False
         return len(rows)
+
+    def _recheck(self, row):
+        """Re-judge one row against its sheet, and colour it accordingly.
+
+        Live rather than at pack time: a frame count that does not divide the
+        sheet is the mistake this tab exists to catch, and an author typing a
+        number should see it stop being wrong as they get it right. The row
+        stays red until the arithmetic works.
+        """
+        record = self._records.get(self.item(row, self.COL_NAME).text())
+        size = record.get('size') if record else None
+        frames = self.cellWidget(row, self.COL_FRAMES).value()
+        cell_w = self.cellWidget(row, self.COL_CELL_W).value()
+        cell_h = self.cellWidget(row, self.COL_CELL_H).value()
+        problem = ('' if size is None
+                   else st.sprite_geometry_problem(frames, cell_w, cell_h,
+                                                   size))
+        self._paint(row, problem)
+        self._touch()
+        return problem
+
+    def _paint(self, row, problem):
+        """Red across the row while its numbers do not add up.
+
+        The whole row, not the column at fault: a frame count and a sheet
+        disagree with each other, and colouring one of them says the other is
+        right.
+        """
+        for col in range(self.columnCount()):
+            item = self.item(row, col)
+            if item is None:
+                continue
+            item.setForeground(Qt.red if problem else self._plain)
+            if problem:
+                item.setToolTip(problem)
+        for col in (self.COL_FRAMES, self.COL_CELL_W, self.COL_CELL_H):
+            widget = self.cellWidget(row, col)
+            if widget is not None:
+                widget.setStyleSheet('color: red;' if problem else '')
+                if problem:
+                    widget.setToolTip(problem)
 
     def _touch(self, *_):
         self._dirty = True
@@ -711,11 +767,19 @@ class SpriteTable(_MultiEdit, QTableWidget):
             name = self.item(r, self.COL_NAME).text()
             if name not in toml.sprites:
                 continue
+            # The geometry the author typed, whether or not it adds up:
+            # saving what is shown is the honest thing, and the row is
+            # already red about it. The packer refuses on it either way, so
+            # nothing worse gets built than would have been.
+            record = toml.sprites[name]
+            record['frames'] = self.cellWidget(r, self.COL_FRAMES).value()
+            record['width'] = self.cellWidget(r, self.COL_CELL_W).value()
+            record['height'] = self.cellWidget(r, self.COL_CELL_H).value()
             widget = self.cellWidget(r, self.COL_PLAYBACK)
             idx = widget.currentIndex()
             if idx >= len(self.PLAYBACK):
                 continue                # the unknown value, left as it was
-            toml.sprites[name]['flags'] = idx
+            record['flags'] = idx
         mine = {self.item(r, self.COL_NAME).text().lower()
                 for r in range(self.rowCount())}
         toml.excluded = {k: v for k, v in toml.excluded.items()
@@ -1415,6 +1479,15 @@ class Window(QMainWindow):
             excluded.pop(name.lower(), None)
             if box is not None and not box.isChecked():
                 excluded[name.lower()] = True
+            if name in settled.sprites:
+                # The geometry as typed, so a refresh does not put back what
+                # the file still says.
+                for key, col in (('frames', self._sprites.COL_FRAMES),
+                                 ('width', self._sprites.COL_CELL_W),
+                                 ('height', self._sprites.COL_CELL_H)):
+                    spin = self._sprites.cellWidget(r, col)
+                    if spin is not None:
+                        settled.sprites[name][key] = spin.value()
             widget = self._sprites.cellWidget(r, self._sprites.COL_PLAYBACK)
             if name in settled.sprites and widget is not None:
                 idx = widget.currentIndex()
@@ -2000,11 +2073,26 @@ class Window(QMainWindow):
             self._load_folder(self._folder)
 
     def _refused(self, lines):
+        """A pack that could not finish, with what stopped it.
+
+        The whole complaint in the dialog, not just its first line: the
+        headline says how many entries failed and the lines under it say
+        which and why, and a box showing only the headline is a box saying
+        nothing actionable.
+        """
         self._log.appendPlainText('\n' + '\n'.join(lines))
         self.statusBar().showMessage(lines[0] if lines else 'Refused')
-        QMessageBox.warning(self, 'Not packed',
-                            '\n'.join(lines[:1]) or 'Refused',
-                            QMessageBox.Ok)
+        head = lines[0] if lines else 'Refused'
+        rest = [ln.strip() for ln in lines[1:] if ln.strip()]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle('Not packed')
+        box.setText(head)
+        if rest:
+            box.setInformativeText('\n'.join(rest[:8]))
+            if len(rest) > 8:
+                box.setDetailedText('\n'.join(rest))
+        box.exec()
 
     def _crashed(self, tb):
         self._log.appendPlainText('\n' + tb)

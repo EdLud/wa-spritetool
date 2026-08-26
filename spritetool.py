@@ -5717,6 +5717,17 @@ def _pack_impl(target: str, out_arg: Optional[str], options: Options,
         reused += not was_built
 
     if problems:
+        # A record that does not fit its sheet is the usual reason, and it is
+        # worth saying so rather than counting entries: "3 of 12" tells an
+        # author how much went wrong, not what to go and fix.
+        geometry = [p for p in problems if 'which needs a' in p]
+        if len(geometry) == len(problems):
+            one = len(problems) == 1
+            raise PackFailed(
+                f"{len(problems)} sprite record{'' if one else 's'} "
+                f"{'does' if one else 'do'} not match "
+                f"{'its picture' if one else 'their pictures'}:",
+                problems=problems)
         raise PackFailed(
             f"Could not pack {len(problems)} of {len(names)} entries:",
             problems=problems)

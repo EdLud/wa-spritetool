@@ -117,10 +117,13 @@ out of the next pack, along with its `.inf` and its line in `index.txt`. The
 picture stays in the folder, so it is a way to try a terrain without
 something rather than a way to delete it.
 
-**Playback** is the one field there you can freely choose, so it is a named
-choice rather than a number: play once and stop, loop, forwards then
-backwards then stop, or ping pong. Change it and press Save. The frame count
-and cell size stay read-only, since those have to agree with the sheet.
+**Frames**, **Cell width** and **Cell height** are the record, and are edited
+here. The row turns red the moment they stop adding up -- the cells stack
+down the sheet, so `cell height x frames` has to equal the sheet's height and
+the cell width has to equal its width -- and stays red until they do, with
+the arithmetic in the tooltip. **Playback** is a named choice rather than a
+number: play once and stop, loop, forwards then backwards then stop, or ping
+pong. Press Save when the row is black.
 
 `framerate` is not shown. The guide records that it does nothing for debris
 and the game ignores it elsewhere, so it would be a column of zeroes nobody
