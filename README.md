@@ -112,6 +112,11 @@ spinner moves each row *by the step you took*, so 4 and 6 nudged up become 5
 and 7 rather than both becoming 5 -- the gap between them is usually there on
 purpose.
 
+A column of tick boxes can be **dragged** rather than clicked one at a time:
+press on the first, and every box the pointer crosses is set to whatever that
+first one became. A box already in that state is left alone, so a drag across
+a mixed column settles it rather than inverting it.
+
 **Include** is on by default. Switch it off and that object or sprite is left
 out of the next pack, along with its `.inf` and its line in `index.txt`. The
 picture stays in the folder, so it is a way to try a terrain without

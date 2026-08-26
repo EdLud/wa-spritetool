@@ -11,7 +11,7 @@ import contextlib
 import os
 import sys
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QEvent, Qt, QSize
 from PySide6.QtGui import QAction, QFont, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
@@ -312,6 +312,86 @@ class _MultiEdit:
         # the table's own arguments pass through rather than stopping here.
         super().__init__(*args, **kwargs)
         self._spreading = False
+        #: While a checkbox drag is in progress: the value the first box was
+        #: set to, which every box dragged over is set to as well. None when
+        #: no drag is running.
+        self._dragging = None
+        #: Cells already dealt with in this drag, so crossing one twice --
+        #: which a wavering pointer does constantly -- does not toggle it back.
+        self._dragged = set()
+
+    def _watch_box(self, box, row, col):
+        """Let a checkbox take part in a drag across rows.
+
+        Dragging down a column of tick boxes is the obvious way to switch a
+        run of objects off, and doing it one click at a time is the kind of
+        work a window is supposed to save. The first box decides: whatever it
+        was set to is what the rest become, so a drag never toggles some on
+        and others off depending on where they started.
+        """
+        box.installEventFilter(self)
+        box.setProperty('cellRow', row)
+        box.setProperty('cellCol', col)
+
+    def eventFilter(self, watched, event):
+        kind = event.type()
+        if kind == QEvent.MouseButtonPress:
+            # Nothing is set here: the click reaches the box itself, which
+            # toggles and reports, and _begin_drag records what it became.
+            self._dragged = set()
+            self._dragging = None
+        elif kind == QEvent.MouseMove and self._dragging is not None:
+            # The pointer is over some box; the one under it is the target,
+            # not the one the drag started on.
+            pos = watched.mapTo(self.viewport(), event.position().toPoint())
+            self._apply_drag(pos)
+        elif kind in (QEvent.MouseButtonRelease, QEvent.Leave):
+            self._dragging = None
+            self._dragged = set()
+        return super().eventFilter(watched, event)
+
+    def _include_changed(self, row, col, state):
+        """A checkbox moved: start a drag from it, and spread as usual.
+
+        The first box of a drag is an ordinary click that happens to be the
+        start of one -- so it reports here like any other, and what it became
+        is what the drag carries. While a drag is running the boxes it sets
+        report here too, which is why the spread is skipped for them: their
+        value came from the drag, not from a selection.
+        """
+        holder = self.cellWidget(row, col)
+        box = holder.findChild(QCheckBox) if holder is not None else None
+        if box is None:
+            return
+        if self._dragging is not None and (row, col) in self._dragged:
+            # Set by the drag itself. Its value came from the drag, so there
+            # is nothing to spread and nothing to decide.
+            self._touch()
+            return
+        # An ordinary change: it spreads to the selection as any edit does,
+        # and doubles as the start of a drag if the mouse then moves.
+        self._begin_drag(row, col, box.isChecked())
+        self._spread(row, col)
+
+    def _begin_drag(self, row, col, checked):
+        """Note what the first box in a drag was set to."""
+        self._dragging = (col, bool(checked))
+        self._dragged = {(row, col)}
+
+    def _apply_drag(self, pos):
+        """Set whatever box the pointer is over to the drag's value."""
+        col, value = self._dragging
+        index = self.indexAt(pos)
+        row = index.row()
+        if row < 0 or (row, col) in self._dragged:
+            return
+        holder = self.cellWidget(row, col)
+        box = holder.findChild(QCheckBox) if holder is not None else None
+        if box is None:
+            return
+        self._dragged.add((row, col))
+        if box.isChecked() != value:
+            box.setChecked(value)
 
     def _rows_with(self, row):
         """The selected rows, when `row` is one of them. Otherwise just it."""
@@ -465,8 +545,10 @@ class ObjectTable(_MultiEdit, QTableWidget):
             keep.setToolTip('Off leaves this object out of the next pack. '
                             'The picture stays in the folder.')
             keep.stateChanged.connect(
-                lambda state, r=row: self._spread(r, self.COL_INCLUDE))
+                lambda state, r=row: self._include_changed(
+                    r, self.COL_INCLUDE, state))
             self.setCellWidget(row, self.COL_INCLUDE, _centred(keep))
+            self._watch_box(keep, row, self.COL_INCLUDE)
 
             weight = QSpinBox()
             weight.setRange(1, 10)
@@ -486,8 +568,10 @@ class ObjectTable(_MultiEdit, QTableWidget):
                 box = QCheckBox()
                 box.setChecked(bool(values[idx]))
                 box.stateChanged.connect(
-                    lambda state, r=row, c=col: self._spread(r, c))
+                    lambda state, r=row, c=col: self._include_changed(
+                        r, c, state))
                 self.setCellWidget(row, col, _centred(box))
+                self._watch_box(box, row, col)
 
             where = QComboBox()
             where.addItems(self.WHERE)
@@ -692,8 +776,10 @@ class SpriteTable(_MultiEdit, QTableWidget):
             keep.setToolTip('Off leaves this sprite out of the next pack. '
                             'The picture stays in the folder.')
             keep.stateChanged.connect(
-                lambda state, rr=r: self._spread(rr, self.COL_INCLUDE))
+                lambda state, rr=r: self._include_changed(
+                    rr, self.COL_INCLUDE, state))
             self.setCellWidget(r, self.COL_INCLUDE, _centred(keep))
+            self._watch_box(keep, r, self.COL_INCLUDE)
 
             # Judged from the widgets, so what is shown and what is
             # complained about cannot disagree.
