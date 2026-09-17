@@ -117,7 +117,8 @@ def run(folder, out_dir, option_fields, answers, events, replies):
     through the queue, because an exception here would die somewhere nobody
     is looking.
     """
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from . import bootstrap
+    bootstrap()
     import spritetool as st
 
     recent = []
@@ -204,7 +205,8 @@ def unpack(archive, out_dir, mode, want_gif, events, replies):
     through argv keeps one implementation instead of a second copy here that
     would drift.
     """
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from . import bootstrap
+    bootstrap()
     import spritetool as st
 
     recent = []

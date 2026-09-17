@@ -12,6 +12,16 @@
 
 cd "$(dirname "$0")" || exit 1
 
+# An installed folder keeps its working parts one level down, so the top
+# holds only what a person double-clicks. Step into it and everything below
+# -- finding a Python, the virtualenv, `-m gui` -- works exactly as it does
+# in a source checkout, which has no such folder and stays where it is. The
+# virtualenv lands in there too, which is the point: it is 400 MB of machine
+# detail nobody should be looking at.
+if [ -d program ] && [ -d program/gui ]; then
+    cd program || exit 1
+fi
+
 say_and_wait() {
     echo
     echo "$1"

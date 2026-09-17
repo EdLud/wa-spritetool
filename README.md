@@ -38,6 +38,30 @@ git clone https://github.com/EdLud/spritetool
 cd spritetool
 ```
 
+### A folder to hand to someone
+
+A checkout is a developer's view: two dozen entries, most of which nobody
+packing a terrain needs to see. `install` writes the other kind of folder --
+what a person double-clicks at the top, and everything else out of the way:
+
+```bash
+python3 spritetool.py install ~/Desktop/spritetool
+```
+
+```
+spritetool/
+  launcher.command      double-click, macOS
+  launcher.bat          double-click, Windows
+  spritetool.py         the command line, for anyone who wants it
+  program/              the window, the settings module, the art it lends
+```
+
+Copy that folder anywhere -- it does not refer back to the checkout it came
+from. The launchers step into `program/` themselves, so the virtualenv they
+offer to build lands in there too and the top stays four entries wide. Pass
+`--force` to write over a folder that already has something in it, and run
+`install` again from the copy to hand it on a second time.
+
 ## The window
 
 Double-click **`launcher.command`** on macOS, or **`launcher.bat`** on

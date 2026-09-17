@@ -21,8 +21,8 @@ def main():
     # binary can be tested against the same fixtures as the source. Without
     # it a packaged build could only be smoke-tested through the window.
     if '--cli' in sys.argv[1:2]:
-        import os
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from . import bootstrap
+        bootstrap()
         import spritetool
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         return spritetool.main()

@@ -435,6 +435,74 @@ def check_gui(no_numpy=False):
                r.stdout.strip() or _tail(r.stderr)) and good
 
 
+def check_install(no_numpy=False):
+    """`install` writes a folder that actually runs from where it lands.
+
+    The shape is the point -- the launchers and the tool at the top, the
+    working parts one level down -- but the shape is also the risk: every
+    import in the tool has to reach across that split. So this does not
+    just count files, it packs a terrain with the installed copy and checks
+    the archive against one packed from the source tree. Equal bytes means
+    the settings module, the shipped art and the worker processes were all
+    found through the subfolder.
+    """
+    import shutil
+    import tempfile
+
+    work = tempfile.mkdtemp(prefix='install-')
+    try:
+        dest = os.path.join(work, 'handed-over')
+        r = subprocess.run([sys.executable, 'spritetool.py', 'install', dest],
+                           capture_output=True, text=True, cwd=ROOT)
+        if r.returncode:
+            return say(False, 'install', _tail(r.stdout + r.stderr))
+
+        top = sorted(os.listdir(dest))
+        want = ['launcher.bat', 'launcher.command', 'program', 'spritetool.py']
+        if top != want:
+            return say(False, 'install layout',
+                       f'top of the folder is {top}, wanted {want}')
+        for need in ('gui', 'presets', 'settings_toml.py'):
+            if not os.path.exists(os.path.join(dest, 'program', need)):
+                return say(False, 'install layout',
+                           f'program/{need} is not there')
+        if os.path.exists(os.path.join(dest, 'program', 'gui', '__pycache__')):
+            return say(False, 'install layout',
+                       'copied __pycache__, which belongs to this machine')
+        good = say(True, 'install layout', f'{len(top)} at the top')
+
+        # The real check: does it pack, and does it pack the same?
+        src = os.path.join(ROOT, 'test', 'pack', 'flat', 'build')
+        out = {}
+        for who, cwd in (('source', ROOT), ('installed', dest)):
+            folder = os.path.join(work, who)
+            shutil.copytree(src, folder)
+            out[who] = os.path.join(work, who + '-out')
+            r = subprocess.run(
+                [sys.executable, os.path.join(cwd, 'spritetool.py'),
+                 'pack-terrain', folder, out[who],
+                 '--yes=setup.confirm', '--defaults'],
+                capture_output=True, text=True, cwd=cwd)
+            if r.returncode:
+                return say(False, f'install packs ({who})',
+                           _tail(r.stdout + r.stderr))
+
+        built = [os.path.join(out[w], 'Level.dir') for w in ('source',
+                                                             'installed')]
+        if not all(os.path.exists(b) for b in built):
+            return say(False, 'install packs', 'no Level.dir written')
+        digests = [hashlib.sha256(open(b, 'rb').read()).hexdigest()
+                   for b in built]
+        if digests[0] != digests[1]:
+            return say(False, 'install packs',
+                       f'installed copy packed {digests[1][:8]}, source '
+                       f'packed {digests[0][:8]}')
+        return say(True, 'install packs',
+                   f'same archive as the source tree, {digests[0][:8]}') and good
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def check_unpack(no_numpy=False):
     """The window's extract/decompress job, without the window.
 
@@ -1516,7 +1584,8 @@ def check_toml(no_numpy=False):
 GROUPS = {'decode': check_decode, 'manifest': check_manifest,
           'pack': check_pack, 'jobs': check_jobs, 'nested': check_nested,
           'padding': check_padding, 'colours': check_colours,
-          'toml': check_toml, 'unpack': check_unpack, 'gui': check_gui}
+          'toml': check_toml, 'unpack': check_unpack,
+          'install': check_install, 'gui': check_gui}
 
 #: Left out unless named or --all is given. Slow enough to change how often
 #: the suite gets run, which is its own kind of risk.

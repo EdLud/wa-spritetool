@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 from .bridge import PackJob
 from .job import ANSWER_CANCEL, ANSWER_NO, ANSWER_YES
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from . import bootstrap
+bootstrap()                    # both layouts -- see gui/__init__.py
 import spritetool as st                                        # noqa: E402
 import settings_toml                                          # noqa: E402
 

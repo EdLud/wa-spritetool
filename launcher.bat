@@ -15,6 +15,12 @@ REM setlocal EnableDelayedExpansion.
 
 cd /d "%~dp0"
 
+REM An installed folder keeps its working parts one level down, so the top
+REM holds only what a person double-clicks. Step into it and everything
+REM below -- finding a Python, the virtualenv, `-m gui` -- works exactly as
+REM it does in a source checkout, which has no such folder and stays put.
+if exist "program\gui\" cd /d "%~dp0program"
+
 REM `py` is the launcher a python.org install puts on PATH and is the most
 REM reliable; `python` is what a Store or custom install leaves. Take the
 REM first that can import both dependencies rather than the first that runs:

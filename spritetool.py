@@ -26,10 +26,22 @@ try:
 except ImportError:  # optional; only makes fitting PNG colours quicker
     np = None
 
+#: The subfolder an installed copy keeps its working parts in. The top of
+#: that folder holds only what a person double-clicks -- the launchers and
+#: this file -- so everything else is one level down and has to be put on
+#: the path before it can be imported. A source checkout has no such folder
+#: and skips this entirely.
+PROGRAM_DIR = 'program'
+
+_here = os.path.dirname(os.path.abspath(__file__))
+_program = os.path.join(_here, PROGRAM_DIR)
+if os.path.isdir(_program) and _program not in sys.path:
+    sys.path.insert(0, _program)
+
 # The terrain settings file, settings.spritetool.toml. A module of its own
 # because the GUI reads and writes it too, and because it stands alone: it
 # imports nothing from here, so there is no cycle to think about.
-import settings_toml
+import settings_toml                                          # noqa: E402
 
 __version__ = "0.3.0"
 
@@ -2562,6 +2574,11 @@ def defaults_roots() -> List[str]:
     looked.
     """
     roots = [os.path.dirname(os.path.abspath(__file__))]
+    # An installed folder keeps the art one level down with the rest of the
+    # working parts, so the subfolder is looked in as well as beside the
+    # script. Listed after, not before: a checkout that happens to have both
+    # should use the one it is running from.
+    roots.append(os.path.join(roots[0], PROGRAM_DIR))
     if frozen():
         roots.insert(0, sys._MEIPASS)
         exe = os.path.dirname(os.path.abspath(sys.executable))
@@ -4713,6 +4730,10 @@ def print_help():
     print("                                    Decode sprites to raw pixels, BMP and .spd")
     print("                                    --gif also writes animated GIFs (slow)")
     print("  list <dir_file>                   List files in .dir")
+    print("  install <folder> [--force]        Write a folder ready to hand")
+    print("                                    to someone: the launchers and")
+    print("                                    the tool at the top, the rest")
+    print(f"                                    in {PROGRAM_DIR}/")
     print("  version                           Show version")
     print("  help                              Show this help")
 
@@ -4748,6 +4769,113 @@ def _expand_folder(argv):
         out = base if rel == os.curdir else os.path.join(base, rel)
         runs.append([argv[0], 'decompress', path, out] + opts)
     return runs
+
+
+#: What an installed folder holds, and where. The top is only what a person
+#: double-clicks -- two launchers and the tool itself -- because a folder
+#: whose first screen is twenty files is one nobody reads. Everything the
+#: tool needs to run sits in PROGRAM_DIR under it.
+INSTALL_TOP = ('launcher.command', 'launcher.bat', 'spritetool.py')
+INSTALL_FILES = ('settings_toml.py', 'README.md', 'SPR_FORMAT.md', 'LICENSE')
+INSTALL_DIRS = ('gui', 'presets')
+
+
+def _install_source(name: str) -> Optional[str]:
+    """Find one of the tool's own files, in either layout.
+
+    A source checkout has everything beside this script; an installed folder
+    has the launchers and the script at the top and the rest one level down.
+    Looking in both means `install` works when run from a copy it made
+    earlier, which is how somebody hands the tool on without having the
+    repository.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for root in (here, os.path.join(here, PROGRAM_DIR)):
+        path = os.path.join(root, name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def install_folder(dest: str, force: bool = False) -> int:
+    """Write a folder somebody can use without being shown around it.
+
+    The shape is the whole point. Double-clicking is the only thing most
+    people will ever do with this, so the top of the folder holds the two
+    launchers and the tool, and the parts that make it work -- the window,
+    the settings module, the art it lends out -- go one level down where
+    they are still there to read but not in the way.
+    """
+    import shutil
+
+    dest = os.path.abspath(dest)
+    here = os.path.dirname(os.path.abspath(__file__))
+    if dest == here or dest.startswith(here + os.sep):
+        print(f'Error: {dest} is inside the tool\'s own folder. '
+              f'Install somewhere else -- it would copy itself into itself.')
+        return 1
+    if os.path.isdir(dest) and os.listdir(dest) and not force:
+        print(f'Error: {dest} already has something in it. '
+              f'Pass --force to write into it anyway.')
+        return 1
+
+    program = os.path.join(dest, PROGRAM_DIR)
+    os.makedirs(program, exist_ok=True)
+
+    missing, wrote = [], 0
+    for name in INSTALL_TOP:
+        source = _install_source(name)
+        if source is None:
+            missing.append(name)
+            continue
+        target = os.path.join(dest, name)
+        shutil.copy2(source, target)
+        wrote += 1
+        if name.endswith('.command'):
+            # Finder will not run a .command without it, and a copy does not
+            # always carry the bit across -- a zip in between drops it.
+            os.chmod(target, os.stat(target).st_mode | 0o111)
+
+    for name in INSTALL_FILES:
+        source = _install_source(name)
+        if source is None:
+            # The docs are not needed to run, so a checkout without them
+            # still installs; the launchers and the tool are not optional.
+            continue
+        shutil.copy2(source, os.path.join(program, name))
+        wrote += 1
+
+    for name in INSTALL_DIRS:
+        source = _install_source(name)
+        if source is None:
+            missing.append(name + os.sep)
+            continue
+        target = os.path.join(program, name)
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+        # __pycache__ is this machine's build of the source beside it, and
+        # copying it hands the next machine bytecode it will ignore at best.
+        shutil.copytree(source, target,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        wrote += len([f for _r, _d, fs in os.walk(target) for f in fs])
+
+    if missing:
+        print(f'Error: could not find {", ".join(missing)} to copy. '
+              f'Run install from a source checkout.')
+        return 1
+
+    print(f'Installed to {dest}')
+    print(f'  {len(INSTALL_TOP)} files at the top, '
+          f'{wrote - len(INSTALL_TOP)} in {PROGRAM_DIR}{os.sep}')
+    print()
+    print('  To start it:')
+    print('    macOS    double-click launcher.command')
+    print('    Windows  double-click launcher.bat')
+    print()
+    print(f'  The first start offers to install what the window needs, into '
+          f'{PROGRAM_DIR}{os.sep}.venv -- nothing is put on the system '
+          f'Python.')
+    return 0
 
 
 class SpritetoolError(Exception):
@@ -5824,6 +5952,15 @@ def main():
     elif command == "version":
         print(f"wa-py-spriteHelper v{__version__}")
         return 0
+
+    elif command == "install":
+        args = [a for a in sys.argv[2:] if not a.startswith('-')]
+        if not args:
+            print("Error: install requires a folder to write to")
+            print("  spritetool.py install \"~/Desktop/spritetool\"")
+            return 1
+        return install_folder(os.path.expanduser(args[0]),
+                              force='--force' in sys.argv[2:])
 
     elif command == "extract":
         if len(sys.argv) < 3:

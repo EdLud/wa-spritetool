@@ -168,8 +168,10 @@ python3 test/run.py pack          # one group, or several: `pack colours`
 `toml` is ~250s and `pack` ~50s, because each packs real terrains and every
 pack spawns a process pool (~13s a run, mostly starting and stopping
 workers). Everything else together is under 6s. So a decoder change is
-`decode`, a palette or encoder change is `pack colours`, and anything about
-settings.spritetool.toml, setup, or sprite records is `toml`. Run the whole
+`decode`, a palette or encoder change is `pack colours`, anything about
+settings.spritetool.toml, setup, or sprite records is `toml`, and anything
+touching how a module is imported or where the shipped art is found is
+`install` (~25s: it packs the same terrain twice). Run the whole
 suite before a commit; `--no-numpy` only when the change touched colour
 counting or palette fitting, which is all numpy does here. A change that
 cannot affect a group -- a docstring, a GUI label -- does not need it run.
@@ -388,6 +390,20 @@ SpriteEditor writes).
   a project open, since `settings_toml.save(folder, ...)` resolves to
   `candidates(folder)[0]` -- whichever name sorts first, not the one on
   screen. A folder with two projects otherwise saves into the wrong one.
+- `install` writes the folder a person is handed: the two launchers and
+  `spritetool.py` at the top, everything else under `PROGRAM_DIR`
+  (`program/`). Three things make that split work, and all three have to
+  hold or the copy runs from the checkout and fails from anywhere else.
+  `spritetool.py` puts the subfolder on `sys.path` before importing
+  `settings_toml`, and `defaults_roots()` looks in it for `presets`.
+  `gui.bootstrap()` adds both the folder above `gui` and the one above that,
+  since `spritetool.py` sits beside `gui` in a checkout and one level up in
+  an installed copy -- it runs on `import gui`, so a spawned pack worker
+  gets it too. The launchers `cd` into `program/` when it is there, which is
+  why the virtualenv lands inside it and the top of the folder stays four
+  entries wide. `test/run.py install` packs a terrain with an installed copy
+  and compares the archive against the source tree's byte for byte; a
+  layout bug shows up as a different digest rather than as a stack trace.
 - `Recents` keeps the projects opened before in `QSettings`, which is the
   platform's own place for such things -- nothing of ours is written beside
   the terrains. It stores settings-file paths rather than folders, since a
