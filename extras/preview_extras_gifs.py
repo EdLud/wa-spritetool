@@ -63,6 +63,12 @@ TOOLS = {
         "frames": 60,
         "bed": (18, 34, 60),
     },
+    "make-bonfire": {
+        # One team only for the preview: all six would be six GIFs of the
+        # same motion, and the point here is to see that the fire moves.
+        "args": ["-t", "blue", "-n", "40"],
+        "gif": "native",
+    },
 }
 
 

@@ -53,8 +53,21 @@ repo ships no game data.
 
 **Animation** — `make-grass-wind` (blades swaying), `make-back2` (a reef
 swaying), `make-bubbles` (bubbles rising), `make-flies` and `make-fly-bursts`
-(insects milling and scattering), `make-anim-test` (rising circles, to check
-a strip reads at all). All six are covered by `preview_extras_gifs.py`.
+(insects milling and scattering), `make-bonfire` (a campfire, one per team
+colour), `make-anim-test` (rising circles, to check a strip reads at all).
+All seven are covered by `preview_extras_gifs.py`.
+
+`make-bonfire` writes six strips in one run:
+
+```bash
+./extras/make-bonfire/make-bonfire.py -o fires/bonfire.png -t all --spd --gif
+```
+
+The six differ in more than hue. A flame's colour follows its temperature,
+so the cooler-looking teams get a taller, thinner, faster fire and the warmer
+ones a squatter, lazier one -- edit `TEAMS` at the bottom of the file. It
+defaults to a free palette, since a bonfire is usually a terrain object
+rather than a gfx0/gfx1 override; pass `--palette gfx0` for one that is.
 
 **Texture** — `make-seamless-texture` (tile a photograph without a seam),
 `make-dendrites` and `make-coral` (grown patterns).
