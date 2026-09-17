@@ -118,7 +118,10 @@ jobs:
             ditto -c -k --sequesterRsrc --keepParent \
               dist/spritetool.app "out/${{ matrix.asset }}"
           else
-            powershell -Command "Compress-Archive -Path dist/spritetool/* -DestinationPath out/${{ matrix.asset }}"
+            # The folder, not its contents: unzipping should give one
+            # spritetool\ to open, not two hundred loose files in whatever
+            # directory the person happened to be in.
+            powershell -Command "Compress-Archive -Path dist/spritetool -DestinationPath out/${{ matrix.asset }}"
           fi
 
       - uses: actions/upload-artifact@v4

@@ -43,7 +43,7 @@ if os.path.isdir(_program) and _program not in sys.path:
 # imports nothing from here, so there is no cycle to think about.
 import settings_toml                                          # noqa: E402
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 # Sanity bound on decoded sprite dimensions. Level themes ship full-screen
 # backdrops, the largest seen being 1280x370.
