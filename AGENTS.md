@@ -390,6 +390,21 @@ SpriteEditor writes).
   a project open, since `settings_toml.save(folder, ...)` resolves to
   `candidates(folder)[0]` -- whichever name sorts first, not the one on
   screen. A folder with two projects otherwise saves into the wrong one.
+- `packaging/` holds the frozen build: `entry.py` because PyInstaller wants
+  a script and `gui/__main__.py` is not usable as one (it reaches siblings
+  with `from .app import`, which needs a package), and `spritetool.spec`
+  because `presets/` is data that nothing imports, so no amount of following
+  imports will find it -- it is listed in `datas` and lands where
+  `defaults_roots()` already looks, `sys._MEIPASS`. `gui.job` is a
+  hiddenimport for the same kind of reason: multiprocessing reaches it by
+  qualified name in a child, along no path Analysis can see.
+- `.github/workflows/release.yml` builds on a `v*` tag, never on a push to
+  main, and every build starts the binary and packs a terrain with it before
+  packaging -- a bundle that lost `presets/` looks perfectly healthy until
+  somebody sets up their first terrain. The tag must match `__version__` or
+  the build stops. `workflow_dispatch` runs the same build without
+  publishing, which is how to find out that a spec change still works on
+  Windows without cutting a version to do it.
 - `install` writes the folder a person is handed: the two launchers and
   `spritetool.py` at the top, everything else under `PROGRAM_DIR`
   (`program/`). Three things make that split work, and all three have to

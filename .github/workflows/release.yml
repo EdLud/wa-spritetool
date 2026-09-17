@@ -1,0 +1,158 @@
+# Build the downloads for a release, and publish them.
+#
+# A tag is the trigger, not a push to main. A package per commit would make
+# the version number say nothing and leave a hundred releases nobody chose;
+# a tag is somebody deciding that this commit is the one. The tag also names
+# the release, so `git tag v0.3.1 && git push origin v0.3.1` is the whole
+# ceremony.
+#
+# workflow_dispatch is here to test the build without publishing anything:
+# it produces the same artifacts, attached to the run rather than to a
+# release, which is the only way to find out that a change to the spec still
+# builds on Windows without cutting a version to do it.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write        # needed to create the release and upload to it
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not hide whether the other worked --
+      # they fail for different reasons and both want seeing.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            asset: spritetool-macos.zip
+          - os: windows-latest
+            name: Windows
+            asset: spritetool-windows.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The floor the tool supports is 3.8, but the build machine is not
+          # the user's machine: a frozen bundle carries its own interpreter,
+          # so this is only what PyInstaller runs on.
+          python-version: '3.12'
+
+      - name: Install what the build needs
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pillow PySide6-Essentials pyinstaller
+
+      - name: Work out the version
+        # The tag is the version, minus its leading v. A manual run has no
+        # tag, so it is labelled as a build rather than given a number that
+        # would collide with a real release later.
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "SPRITETOOL_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "SPRITETOOL_VERSION=0.0.0-dev" >> "$GITHUB_ENV"
+          fi
+
+      # A tag of v0.4.0 on code whose __version__ still says 0.3.0 would
+      # publish a release whose binary disagrees with its own download page,
+      # and nobody finds that out until they are trying to reproduce a bug
+      # against the wrong version. Cheaper to stop here.
+      - name: Check the tag and the code agree
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          code=$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('spritetool.py').read()).group(1))")
+          if [ "$code" != "$SPRITETOOL_VERSION" ]; then
+            echo "Tag says $SPRITETOOL_VERSION, spritetool.py says $code."
+            echo "Set __version__ to match the tag, or tag the version the code claims."
+            exit 1
+          fi
+          echo "both say $code"
+
+      - name: Build
+        run: >
+          pyinstaller --clean --noconfirm
+          --distpath dist --workpath build
+          packaging/spritetool.spec
+
+      # Checked here rather than trusted: a bundle that starts and packs is
+      # the only evidence that the art came along and that a frozen worker
+      # can still be spawned. A build that silently lost presets/ looks
+      # perfectly healthy until somebody sets up their first terrain.
+      - name: Check it runs
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN="dist/spritetool/spritetool.exe"
+          else
+            BIN="dist/spritetool/spritetool"
+          fi
+          "$BIN" --cli version
+          cp -R test/pack/flat/build packtest
+          "$BIN" --cli pack-terrain packtest packed \
+            --yes=setup.confirm --defaults
+          test -f packed/Level.dir || { echo "no Level.dir built"; exit 1; }
+          echo "packed $(wc -c < packed/Level.dir) bytes"
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # The .app, not the plain folder: it is what a person drags to
+            # Applications. ditto rather than zip, because zip flattens the
+            # symlinks inside a framework bundle and the copy stops working.
+            ditto -c -k --sequesterRsrc --keepParent \
+              dist/spritetool.app "out/${{ matrix.asset }}"
+          else
+            powershell -Command "Compress-Archive -Path dist/spritetool/* -DestinationPath out/${{ matrix.asset }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/${{ matrix.asset }}
+
+  publish:
+    # Only a tag publishes. A manual run stops after the artifacts above,
+    # which is the point of being able to start one.
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloads
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: downloads/*.zip
+          generate_release_notes: true
+          body: |
+            Download the one for your machine, unzip it, and open it. Nothing
+            else has to be installed -- the Python and the Qt it needs are
+            inside.
+
+            **macOS**: the first open is refused, because the app is not
+            signed by an identity Apple charges for. Right-click it and
+            choose Open, and the refusal becomes a dialog with an Open
+            button on it. That is only needed once.
+
+            **Windows**: SmartScreen says the publisher is unknown, for the
+            same reason. "More info" then "Run anyway".

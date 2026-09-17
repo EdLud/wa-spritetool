@@ -38,6 +38,26 @@ git clone https://github.com/EdLud/spritetool
 cd spritetool
 ```
 
+### Downloads
+
+[Releases](https://github.com/EdLud/wa-spritetool/releases) carries a build
+for macOS and one for Windows, with the Python and the Qt inside -- nothing
+has to be installed to run one. Neither is signed, so the first open is
+refused: on macOS right-click and choose Open, on Windows take "More info"
+then "Run anyway". Once each.
+
+Releases are cut by tagging a version:
+
+```bash
+git tag v0.3.1
+git push origin v0.3.1
+```
+
+That builds both, checks each one starts and packs a terrain, and publishes
+them. A plain push to `main` builds nothing. The tag has to match
+`__version__` in `spritetool.py` or the build stops rather than publish a
+binary that disagrees with its own download page.
+
 ### A folder to hand to someone
 
 A checkout is a developer's view: two dozen entries, most of which nobody
