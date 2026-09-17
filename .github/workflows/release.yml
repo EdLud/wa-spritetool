@@ -143,19 +143,47 @@ jobs:
           path: downloads
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: downloads/*.zip
-          generate_release_notes: true
-          body: |
-            Download the one for your machine, unzip it, and open it. Nothing
-            else has to be installed -- the Python and the Qt it needs are
-            inside.
+      # `gh` rather than an upload action. The first attempt at this used
+      # softprops/action-gh-release, which uploads through undici and trips
+      # its headers timeout on assets this size -- the release was created,
+      # both zips started uploading, and the job died with "Headers Timeout
+      # Error". gh is built for exactly this, is already on the runner, and
+      # resumes rather than starting the whole asset again.
+      #
+      # Written to survive being run twice. A timeout leaves a release that
+      # exists with some or none of its assets, and the fix for that should
+      # be re-running the job, not deleting things by hand: the release is
+      # created only when it is not already there, and --clobber replaces a
+      # half-uploaded asset instead of refusing.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          notes=$(mktemp)
+          cat > "$notes" <<'EOF'
+          Download the one for your machine, unzip it, and open it. Nothing
+          else has to be installed -- the Python and the Qt it needs are
+          inside.
 
-            **macOS**: the first open is refused, because the app is not
-            signed by an identity Apple charges for. Right-click it and
-            choose Open, and the refusal becomes a dialog with an Open
-            button on it. That is only needed once.
+          **macOS**: the first open is refused, because the app is not signed
+          by an identity Apple charges for. Right-click it and choose Open,
+          and the refusal becomes a dialog with an Open button on it. That is
+          only needed once.
 
-            **Windows**: SmartScreen says the publisher is unknown, for the
-            same reason. "More info" then "Run anyway".
+          **Windows**: SmartScreen says the publisher is unknown, for the
+          same reason. "More info" then "Run anyway".
+          EOF
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists, updating it"
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$notes"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" --notes-file "$notes"
+          fi
+
+          gh release upload "$GITHUB_REF_NAME" downloads/*.zip --clobber
+          echo "attached:"
+          gh release view "$GITHUB_REF_NAME" --json assets \
+            --jq '.assets[] | "  \(.name)  \(.size) bytes"'
