@@ -175,15 +175,24 @@ jobs:
           same reason. "More info" then "Run anyway".
           EOF
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          # --repo on every call. This job never checks the repository out
+          # -- it only needs two zips -- so there is no git remote for gh to
+          # read the repository from, and without being told it stops with
+          # "not a git repository". Checking out the whole tree just to name
+          # it would be the wrong fix.
+          repo="$GITHUB_REPOSITORY"
+
+          if gh release view "$GITHUB_REF_NAME" --repo "$repo" >/dev/null 2>&1; then
             echo "release $GITHUB_REF_NAME already exists, updating it"
-            gh release edit "$GITHUB_REF_NAME" --notes-file "$notes"
+            gh release edit "$GITHUB_REF_NAME" --repo "$repo" \
+              --notes-file "$notes"
           else
-            gh release create "$GITHUB_REF_NAME" \
+            gh release create "$GITHUB_REF_NAME" --repo "$repo" \
               --title "$GITHUB_REF_NAME" --notes-file "$notes"
           fi
 
-          gh release upload "$GITHUB_REF_NAME" downloads/*.zip --clobber
+          gh release upload "$GITHUB_REF_NAME" downloads/*.zip \
+            --repo "$repo" --clobber
           echo "attached:"
-          gh release view "$GITHUB_REF_NAME" --json assets \
+          gh release view "$GITHUB_REF_NAME" --repo "$repo" --json assets \
             --jq '.assets[] | "  \(.name)  \(.size) bytes"'
