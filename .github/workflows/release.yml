@@ -182,17 +182,37 @@ jobs:
           # it would be the wrong fix.
           repo="$GITHUB_REPOSITORY"
 
+          # --draft=false on both paths, and it is the whole point rather
+          # than a detail. A draft release is visible only to people who can
+          # write to the repository: its download URLs read
+          # /releases/download/untagged-<hash>/... and everybody else gets a
+          # 404. An earlier attempt left one behind, this job found it,
+          # uploaded both zips into it and reported success -- a green run
+          # and nothing anyone could download. Publishing explicitly here
+          # means a leftover draft is promoted rather than inherited.
           if gh release view "$GITHUB_REF_NAME" --repo "$repo" >/dev/null 2>&1; then
             echo "release $GITHUB_REF_NAME already exists, updating it"
             gh release edit "$GITHUB_REF_NAME" --repo "$repo" \
-              --notes-file "$notes"
+              --notes-file "$notes" --draft=false
           else
             gh release create "$GITHUB_REF_NAME" --repo "$repo" \
-              --title "$GITHUB_REF_NAME" --notes-file "$notes"
+              --title "$GITHUB_REF_NAME" --notes-file "$notes" --draft=false
           fi
 
           gh release upload "$GITHUB_REF_NAME" downloads/*.zip \
             --repo "$repo" --clobber
+
+          # Say what was published, and refuse to call a draft a release.
+          # The failure this guards against does not look like a failure:
+          # every step is green and the download page is empty for anyone
+          # who is not the author.
+          state=$(gh release view "$GITHUB_REF_NAME" --repo "$repo" \
+                    --json isDraft --jq '.isDraft')
           echo "attached:"
           gh release view "$GITHUB_REF_NAME" --repo "$repo" --json assets \
             --jq '.assets[] | "  \(.name)  \(.size) bytes"'
+          if [ "$state" != "false" ]; then
+            echo "still a draft, so nobody but the author can download it"
+            exit 1
+          fi
+          echo "published at $GITHUB_SERVER_URL/$repo/releases/tag/$GITHUB_REF_NAME"
